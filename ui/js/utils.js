@@ -2,6 +2,7 @@
 import { modernSettings } from './ModernSettings.js';
 import { SVG_ATMOS } from './icons.js';
 import { qualityBadgeSettings, coverArtSizeSettings, trackDateSettings } from './storage.js';
+import { youtubeLinkForRoute } from './volna-media.js';
 
 export const QUALITY = 'LOSSLESS';
 
@@ -843,11 +844,12 @@ export function positionMenu(menu, x, y, anchorRect = null) {
     menu.style.visibility = 'visible';
 }
 
-export const getShareUrl = (path) => {
-    const baseUrl = window.NL_MODE ? 'https://monochrome.tf' : window.location.origin;
-    const safePath = path.startsWith('/') ? path : `/${path}`;
-    return `${baseUrl}${safePath}`;
-};
+/**
+ * A link others can open: the music.youtube.com page for the item. The app's
+ * own origin (tauri://localhost) means nothing outside it. Null for things
+ * that only exist in the local library.
+ */
+export const getShareUrl = (path) => youtubeLinkForRoute(path);
 
 /**
  * Builds a full artist array by combining the track's listed artists

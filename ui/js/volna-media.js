@@ -119,3 +119,33 @@ export function routeForYoutubeLink(text) {
     if (first === 'channel' && second && /^UC[A-Za-z0-9_-]+$/.test(second)) return `/artist/${second}`;
     return null;
 }
+
+/**
+ * The music.youtube.com link for an app route, for «Copy link» (the inverse
+ * of routeForYoutubeLink). Local-only routes (user playlists, folders)
+ * have no public link: returns null.
+ */
+export function youtubeLinkForRoute(path) {
+    const [type, rawId] = String(path).replace(/^\/+/, '').split(/[/?#]/);
+    if (!rawId || !/^[A-Za-z0-9_-]+$/.test(rawId)) return null;
+    const id = rawId;
+    const base = 'https://music.youtube.com';
+    switch (type) {
+        case 'track':
+        case 'video':
+            return `${base}/watch?v=${id}`;
+        case 'album':
+            return id.startsWith('OLAK5uy_') ? `${base}/playlist?list=${id}` : `${base}/browse/${id}`;
+        case 'artist':
+            return `${base}/channel/${id}`;
+        case 'playlist':
+            return `${base}/playlist?list=${id}`;
+        case 'mix':
+            // A track radio opens best from its seed track.
+            return id.startsWith('RDAMVM')
+                ? `${base}/watch?v=${id.slice(6)}&list=${id}`
+                : `${base}/playlist?list=${id}`;
+        default:
+            return null;
+    }
+}

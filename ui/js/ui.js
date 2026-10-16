@@ -14,7 +14,6 @@ import {
     formatDuration,
     escapeHtml,
     decodeHtml,
-    getShareUrl,
     createModal,
 } from './utils.js';
 import { openLyricsPanel, renderLyricsInFullscreen, clearFullscreenLyricsSync } from './lyrics.js';
@@ -36,7 +35,6 @@ import { getVibrantColorFromImage } from './vibrant-color.js';
 import { Visualizer } from './visualizer.js';
 import { audioContextManager } from './audio-context.js';
 import { navigate } from './router.js';
-import { isDirectImage } from './volna-media.js';
 import { sidePanelManager } from './side-panel.js';
 import {
     renderUnreleasedPage as renderUnreleasedTrackerPage,
@@ -90,7 +88,6 @@ import {
     SVG_PAUSE_LARGE,
     SVG_MINUS,
     SVG_SQUARE_PEN,
-    SVG_SHARE,
     SVG_UPLOAD,
     SVG_SHUFFLE,
     SVG_VIDEO,
@@ -5678,22 +5675,7 @@ export class UIRenderer {
             fragment.appendChild(deleteBtn);
         }
 
-        // Share (User Playlists Only)
-        if (showShare || (isOwned && playlist.isPublic)) {
-            const shareBtn = document.createElement('button');
-            shareBtn.id = 'share-playlist-btn';
-            shareBtn.className = 'btn-secondary';
-            shareBtn.innerHTML = `${SVG_SHARE(20)}<span>Share</span>`;
-
-            shareBtn.onclick = () => {
-                const url = getShareUrl(`/userplaylist/${playlist.id || playlist.uuid}`);
-                navigator.clipboard
-                    .writeText(url)
-                    .then(() => alert('Link copied to clipboard!'))
-                    .catch(console.error);
-            };
-            fragment.appendChild(shareBtn);
-        }
+        // No Share button: Volna's playlists are local, with no public link.
 
         // Order: Play, Shuffle, Sort, Like, then Edit/Delete/Share.
         const likeBtn = actionsDiv.querySelector('#like-playlist-btn');

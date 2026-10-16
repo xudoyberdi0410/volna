@@ -1764,6 +1764,10 @@ export async function handleTrackAction(
         const storedHref = contextMenu?._contextHref;
         const typeForUrl = type === 'user-playlist' ? 'userplaylist' : type;
         const url = getShareUrl(storedHref ? storedHref : `/${typeForUrl}/${item.id || item.uuid}`);
+        if (!url) {
+            showNotification('Это есть только в вашей библиотеке, ссылки на YouTube Music нет');
+            return;
+        }
 
         await navigator.clipboard
             .writeText(url)
@@ -1771,15 +1775,6 @@ export async function handleTrackAction(
                 showNotification('Link copied to clipboard!');
             })
             .catch(console.error);
-    } else if (action === 'open-in-new-tab') {
-        // Use stored href from card if available, otherwise construct URL
-        const contextMenu = document.getElementById('context-menu');
-        const storedHref = contextMenu?._contextHref;
-        const url = storedHref
-            ? `${window.location.origin}${storedHref}`
-            : `${window.location.origin}/${type}/${item.id || item.uuid}`;
-
-        window.open(url, '_blank');
     } else if (action === 'track-info') {
         // Show detailed track info modal
         const isTracker = item.isTracker;

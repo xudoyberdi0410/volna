@@ -6,6 +6,7 @@ import {
     isVolnaImage,
     resizeImage,
     routeForYoutubeLink,
+    youtubeLinkForRoute,
 } from '../volna-media.js';
 
 describe('volna-media', () => {
@@ -69,5 +70,22 @@ describe('volna-media', () => {
         expect(routeForYoutubeLink('https://example.com/watch?v=x')).toBe(null);
         expect(routeForYoutubeLink('not a link')).toBe(null);
         expect(routeForYoutubeLink('https://youtube.com/watch?v=<script>')).toBe(null);
+    });
+
+    it('builds music.youtube.com links for app routes', () => {
+        const yt = 'https://music.youtube.com';
+        expect(youtubeLinkForRoute('/track/dQw4w9WgXcQ')).toBe(`${yt}/watch?v=dQw4w9WgXcQ`);
+        expect(youtubeLinkForRoute('/album/MPREb_abc')).toBe(`${yt}/browse/MPREb_abc`);
+        expect(youtubeLinkForRoute('/album/OLAK5uy_x')).toBe(`${yt}/playlist?list=OLAK5uy_x`);
+        expect(youtubeLinkForRoute('/artist/UCabc')).toBe(`${yt}/channel/UCabc`);
+        expect(youtubeLinkForRoute('/playlist/PLabc')).toBe(`${yt}/playlist?list=PLabc`);
+        expect(youtubeLinkForRoute('/mix/RDAMVMdQw4w9WgXcQ')).toBe(`${yt}/watch?v=dQw4w9WgXcQ&list=RDAMVMdQw4w9WgXcQ`);
+        expect(youtubeLinkForRoute('/mix/RDEMabc')).toBe(`${yt}/playlist?list=RDEMabc`);
+        expect(youtubeLinkForRoute('/userplaylist/123')).toBe(null);
+        expect(youtubeLinkForRoute('/track/bad id')).toBe(null);
+        // Round trip with the paste handler.
+        for (const route of ['/track/abc', '/album/MPREb_x', '/artist/UCx', '/playlist/PLx', '/mix/RDEMx']) {
+            expect(routeForYoutubeLink(youtubeLinkForRoute(route))).toBe(route);
+        }
     });
 });

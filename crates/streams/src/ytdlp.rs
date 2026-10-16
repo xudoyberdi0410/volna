@@ -1,0 +1,524 @@
+//! Running yt-dlp: finding the binary, resolving a video to an audio URL,
+//! reporting its version and self-updating it.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+
+use crate::error::{Result, StreamError};
+
+const TARGET_TRIPLE: &str = env!("VOLNA_STREAMS_TARGET");
+
+/// How long a resolve may take before we give up on yt-dlp.
+pub const DEFAULT_RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
+/// `yt-dlp -U` downloads a ~20 MB binary.
+const UPDATE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Assumed lifetime of a URL that carries no `expire` parameter.
+const FALLBACK_URL_LIFETIME: Duration = Duration::from_secs(3600);
+
+/// A YouTube video id: 11 characters of `[A-Za-z0-9_-]`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VideoId(String);
+
+impl VideoId {
+    pub fn parse(raw: &str) -> Result<Self> {
+        let ok = raw.len() == 11
+            && raw
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if ok {
+            Ok(Self(raw.to_owned()))
+        } else {
+            Err(StreamError::InvalidVideoId(raw.to_owned()))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn watch_url(&self) -> String {
+        format!("https://music.youtube.com/watch?v={}", self.0)
+    }
+}
+
+impl std::fmt::Display for VideoId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Audio quality tier. `Low` saves bandwidth on slow proxies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Quality {
+    #[default]
+    High,
+    Low,
+}
+
+impl Quality {
+    /// Parses the `q` query parameter of `volna://stream/` (`low` or anything else).
+    pub fn from_param(value: Option<&str>) -> Self {
+        match value {
+            Some(v) if v.eq_ignore_ascii_case("low") => Self::Low,
+            _ => Self::High,
+        }
+    }
+
+    /// yt-dlp `-f` selector. Opus first: it is what YouTube serves best and
+    /// WebKit/WebView2 both play WebM/Opus; m4a/AAC is the fallback.
+    pub fn format_selector(self) -> &'static str {
+        match self {
+            Self::High => "bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio",
+            Self::Low => "worstaudio[acodec=opus]/worstaudio[ext=m4a]/worstaudio",
+        }
+    }
+}
+
+/// A playable googlevideo URL plus what we know about it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ResolvedStream {
+    pub url: String,
+    pub format_id: String,
+    /// `audio/webm` or `audio/mp4`.
+    pub mime: String,
+    /// `opus`, `mp4a.40.2`, ...
+    pub codec: Option<String>,
+    pub bitrate_kbps: Option<f64>,
+    /// Exact byte length when yt-dlp knows it (or the URL carries `clen`).
+    pub filesize: Option<u64>,
+    /// When googlevideo stops accepting the URL (`expire` URL parameter).
+    pub expires_at: SystemTime,
+    /// User-Agent yt-dlp resolved with; googlevideo may check it.
+    pub user_agent: Option<String>,
+}
+
+/// The subset of `yt-dlp -J` output we use.
+#[derive(Debug, Deserialize)]
+struct YtDlpInfo {
+    url: Option<String>,
+    format_id: Option<String>,
+    ext: Option<String>,
+    acodec: Option<String>,
+    abr: Option<f64>,
+    tbr: Option<f64>,
+    filesize: Option<u64>,
+    #[serde(default)]
+    http_headers: std::collections::HashMap<String, String>,
+}
+
+/// Parses `yt-dlp -J` output for a single selected audio format.
+pub fn parse_info(json: &[u8], now: SystemTime) -> Result<ResolvedStream> {
+    let info: YtDlpInfo =
+        serde_json::from_slice(json).map_err(|e| StreamError::BadYtDlpOutput(e.to_string()))?;
+    let url = info
+        .url
+        .ok_or_else(|| StreamError::BadYtDlpOutput("no url (no single format selected?)".into()))?;
+    let parsed = url::Url::parse(&url).map_err(|e| StreamError::BadYtDlpOutput(e.to_string()))?;
+    let param = |name: &str| {
+        parsed
+            .query_pairs()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.into_owned())
+    };
+
+    let expires_at = param("expire")
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs))
+        .unwrap_or(now + FALLBACK_URL_LIFETIME);
+    let filesize = info
+        .filesize
+        .or_else(|| param("clen").and_then(|v| v.parse().ok()));
+    let mime = param("mime")
+        .filter(|m| m.starts_with("audio/"))
+        .unwrap_or_else(|| mime_for_ext(info.ext.as_deref()).to_owned());
+    let codec = info.acodec.filter(|c| c != "none");
+    let user_agent = info
+        .http_headers
+        .into_iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+        .map(|(_, v)| v);
+
+    Ok(ResolvedStream {
+        url,
+        format_id: info.format_id.unwrap_or_default(),
+        mime,
+        codec,
+        bitrate_kbps: info.abr.or(info.tbr),
+        filesize,
+        expires_at,
+        user_agent,
+    })
+}
+
+fn mime_for_ext(ext: Option<&str>) -> &'static str {
+    match ext {
+        Some("webm" | "weba" | "opus") => "audio/webm",
+        Some("m4a" | "mp4") => "audio/mp4",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Turns yt-dlp's stderr into a typed error.
+fn classify_failure(stderr: &str) -> StreamError {
+    let message = stderr
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("ERROR:"))
+        .or_else(|| stderr.lines().rev().find(|l| !l.trim().is_empty()))
+        .unwrap_or("no output")
+        .trim()
+        .to_owned();
+    let lower = message.to_ascii_lowercase();
+    let unavailable = [
+        "video unavailable",
+        "private video",
+        "not available",
+        "has been removed",
+        "does not exist",
+        "members-only",
+    ];
+    if unavailable.iter().any(|m| lower.contains(m)) && !lower.contains("sign in to confirm") {
+        StreamError::Unavailable(message)
+    } else {
+        StreamError::YtDlpFailed(message)
+    }
+}
+
+/// Where the binary came from; decides whether we may self-update it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// Explicit path or `$VOLNA_YTDLP`.
+    Configured,
+    /// Shipped next to the executable (Tauri `externalBin`).
+    Sidecar,
+    /// Found on `PATH`: most likely a distro package, updated by its owner.
+    System,
+}
+
+/// Result of [`YtDlp::self_update`].
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateReport {
+    pub binary: PathBuf,
+    pub origin: Origin,
+    pub version_before: String,
+    pub version_after: String,
+    pub updated: bool,
+    /// yt-dlp's own output, or why no update was attempted.
+    pub message: String,
+}
+
+/// A located yt-dlp binary.
+#[derive(Debug, Clone)]
+pub struct YtDlp {
+    binary: PathBuf,
+    origin: Origin,
+    timeout: Duration,
+}
+
+impl YtDlp {
+    /// Finds yt-dlp: `explicit`, then `$VOLNA_YTDLP`, then a sidecar next to
+    /// the executable (`yt-dlp-<triple>` as in the Tauri source tree, or
+    /// `yt-dlp` as Tauri installs it), then `PATH`.
+    pub fn locate(explicit: Option<&Path>) -> Result<Self> {
+        let (binary, origin) = if let Some(p) = explicit {
+            if !p.is_file() {
+                return Err(StreamError::YtDlpNotFound);
+            }
+            (p.to_path_buf(), Origin::Configured)
+        } else if let Some(p) = std::env::var_os("VOLNA_YTDLP")
+            .map(PathBuf::from)
+            .filter(|p| p.is_file())
+        {
+            (p, Origin::Configured)
+        } else {
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf));
+            find_in(exe_dir.as_deref(), std::env::var_os("PATH").as_deref())
+                .ok_or(StreamError::YtDlpNotFound)?
+        };
+        Ok(Self {
+            binary,
+            origin,
+            timeout: DEFAULT_RESOLVE_TIMEOUT,
+        })
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn binary(&self) -> &Path {
+        &self.binary
+    }
+
+    pub fn origin(&self) -> Origin {
+        self.origin
+    }
+
+    /// The arguments for resolving `id` (without the binary itself).
+    pub fn resolve_args(id: &VideoId, quality: Quality, proxy: Option<&str>) -> Vec<String> {
+        let mut args: Vec<String> = [
+            "--ignore-config",
+            "--no-playlist",
+            "--no-progress",
+            "-J",
+            "-f",
+            quality.format_selector(),
+        ]
+        .map(String::from)
+        .into();
+        if let Some(proxy) = proxy {
+            args.push("--proxy".into());
+            args.push(proxy.into());
+        }
+        args.push("--".into());
+        args.push(id.watch_url());
+        args
+    }
+
+    /// Resolves `id` to a googlevideo URL, through `proxy` when set (the
+    /// URL is bound to the exit IP, so playback must use the same proxy).
+    pub async fn resolve(
+        &self,
+        id: &VideoId,
+        quality: Quality,
+        proxy: Option<&str>,
+    ) -> Result<ResolvedStream> {
+        let started = std::time::Instant::now();
+        let output = self
+            .run(Self::resolve_args(id, quality, proxy), self.timeout)
+            .await?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(%id, "yt-dlp failed: {}", stderr.trim());
+            return Err(classify_failure(&stderr));
+        }
+        let stream = parse_info(&output.stdout, SystemTime::now())?;
+        tracing::debug!(
+            %id,
+            format = %stream.format_id,
+            mime = %stream.mime,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "resolved"
+        );
+        Ok(stream)
+    }
+
+    pub async fn version(&self) -> Result<String> {
+        let output = self
+            .run(vec!["--version".into()], Duration::from_secs(30))
+            .await?;
+        if !output.status.success() {
+            return Err(classify_failure(&String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    /// Runs `yt-dlp -U` for a bundled or configured binary. A system binary
+    /// is left to the package manager; only its version is reported.
+    pub async fn self_update(&self, proxy: Option<&str>) -> Result<UpdateReport> {
+        let version_before = self.version().await?;
+        let mut report = UpdateReport {
+            binary: self.binary.clone(),
+            origin: self.origin,
+            version_after: version_before.clone(),
+            version_before,
+            updated: false,
+            message: String::new(),
+        };
+
+        if self.origin == Origin::System {
+            report.message =
+                "yt-dlp comes from the system (PATH); update it with the package manager".into();
+            return Ok(report);
+        }
+
+        let mut args = vec!["-U".to_owned()];
+        if let Some(proxy) = proxy {
+            args.push("--proxy".into());
+            args.push(proxy.into());
+        }
+        let output = self.run(args, UPDATE_TIMEOUT).await?;
+        let mut message = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            message.push('\n');
+            message.push_str(stderr.trim());
+        }
+        report.message = message;
+        if !output.status.success() {
+            return Err(StreamError::YtDlpFailed(report.message));
+        }
+        report.version_after = self.version().await?;
+        report.updated = report.version_after != report.version_before;
+        Ok(report)
+    }
+
+    async fn run(&self, args: Vec<String>, timeout: Duration) -> Result<std::process::Output> {
+        let mut cmd = Command::new(&self.binary);
+        cmd.args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let child = cmd.spawn().map_err(StreamError::YtDlpSpawn)?;
+        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(StreamError::YtDlpSpawn),
+            // Dropping the future drops the child, which kills it.
+            Err(_) => Err(StreamError::YtDlpTimeout(timeout)),
+        }
+    }
+}
+
+fn find_in(exe_dir: Option<&Path>, path_var: Option<&OsStr>) -> Option<(PathBuf, Origin)> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let sidecars = [
+        format!("yt-dlp-{TARGET_TRIPLE}{suffix}"),
+        format!("yt-dlp{suffix}"),
+    ];
+    let next_to_exe = exe_dir
+        .into_iter()
+        .flat_map(|dir| sidecars.iter().map(move |name| dir.join(name)))
+        .map(|p| (p, Origin::Sidecar));
+    let on_path = path_var
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|dir| (dir.join(format!("yt-dlp{suffix}")), Origin::System));
+    next_to_exe.chain(on_path).find(|(p, _)| p.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = r#"{
+        "id": "dQw4w9WgXcQ",
+        "format_id": "251",
+        "ext": "webm",
+        "acodec": "opus",
+        "vcodec": "none",
+        "abr": 128.93,
+        "tbr": 128.93,
+        "filesize": 3433755,
+        "url": "https://rr2---sn-x.googlevideo.com/videoplayback?expire=1792193595&itag=251&mime=audio%2Fwebm&clen=3433755&ip=203.0.113.9",
+        "http_headers": {"User-Agent": "Mozilla/5.0 test", "Accept": "*/*"}
+    }"#;
+
+    #[test]
+    fn video_id_validation() {
+        assert!(VideoId::parse("dQw4w9WgXcQ").is_ok());
+        assert!(VideoId::parse("a-b_c-d_e-f").is_ok());
+        for bad in ["", "short", "dQw4w9WgXcQx", "dQw4w9WgX/Q", "../../etc/p"] {
+            assert!(VideoId::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn parses_selected_format() {
+        let s = parse_info(SAMPLE.as_bytes(), UNIX_EPOCH).unwrap();
+        assert_eq!(s.format_id, "251");
+        assert_eq!(s.mime, "audio/webm");
+        assert_eq!(s.codec.as_deref(), Some("opus"));
+        assert_eq!(s.bitrate_kbps, Some(128.93));
+        assert_eq!(s.filesize, Some(3433755));
+        assert_eq!(s.expires_at, UNIX_EPOCH + Duration::from_secs(1792193595));
+        assert_eq!(s.user_agent.as_deref(), Some("Mozilla/5.0 test"));
+    }
+
+    #[test]
+    fn falls_back_to_url_params_and_ext() {
+        let json = r#"{"ext":"m4a","acodec":"mp4a.40.2","url":"https://x.googlevideo.com/videoplayback?clen=42"}"#;
+        let now = UNIX_EPOCH + Duration::from_secs(1000);
+        let s = parse_info(json.as_bytes(), now).unwrap();
+        assert_eq!(s.mime, "audio/mp4");
+        assert_eq!(s.filesize, Some(42));
+        assert_eq!(s.expires_at, now + FALLBACK_URL_LIFETIME);
+        assert_eq!(s.bitrate_kbps, None);
+    }
+
+    #[test]
+    fn rejects_output_without_url() {
+        let err = parse_info(br#"{"formats":[]}"#, UNIX_EPOCH).unwrap_err();
+        assert!(matches!(err, StreamError::BadYtDlpOutput(_)));
+        assert!(parse_info(b"not json", UNIX_EPOCH).is_err());
+    }
+
+    #[test]
+    fn builds_args_with_and_without_proxy() {
+        let id = VideoId::parse("dQw4w9WgXcQ").unwrap();
+        let direct = YtDlp::resolve_args(&id, Quality::High, None);
+        assert!(!direct.contains(&"--proxy".to_owned()));
+        assert_eq!(
+            direct.last().unwrap(),
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        let f = direct.iter().position(|a| a == "-f").unwrap();
+        assert_eq!(direct[f + 1], Quality::High.format_selector());
+
+        let proxied = YtDlp::resolve_args(&id, Quality::Low, Some("socks5h://u:p@127.0.0.1:1"));
+        let p = proxied.iter().position(|a| a == "--proxy").unwrap();
+        assert_eq!(proxied[p + 1], "socks5h://u:p@127.0.0.1:1");
+        assert!(proxied.contains(&Quality::Low.format_selector().to_owned()));
+    }
+
+    #[test]
+    fn classifies_errors() {
+        let e = classify_failure("WARNING: x\nERROR: [youtube] abc: Video unavailable\n");
+        assert!(matches!(e, StreamError::Unavailable(m) if m.contains("Video unavailable")));
+        let e = classify_failure(
+            "ERROR: [youtube] abc: Sign in to confirm you're not a bot. This video is not available",
+        );
+        assert!(matches!(e, StreamError::YtDlpFailed(_)));
+        assert!(matches!(classify_failure(""), StreamError::YtDlpFailed(m) if m == "no output"));
+    }
+
+    #[test]
+    fn quality_param() {
+        assert_eq!(Quality::from_param(Some("low")), Quality::Low);
+        assert_eq!(Quality::from_param(Some("LOW")), Quality::Low);
+        assert_eq!(Quality::from_param(Some("hi")), Quality::High);
+        assert_eq!(Quality::from_param(None), Quality::High);
+    }
+
+    #[test]
+    fn finds_sidecar_before_path() {
+        let dir = std::env::temp_dir().join(format!("volna-ytdlp-test-{}", std::process::id()));
+        let exe_dir = dir.join("app");
+        let path_dir = dir.join("bin");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&path_dir).unwrap();
+        let suffix = std::env::consts::EXE_SUFFIX;
+        let on_path = path_dir.join(format!("yt-dlp{suffix}"));
+        std::fs::write(&on_path, b"").unwrap();
+
+        let path_var = std::env::join_paths([&path_dir]).unwrap();
+        assert_eq!(
+            find_in(Some(&exe_dir), Some(&path_var)),
+            Some((on_path, Origin::System))
+        );
+
+        let sidecar = exe_dir.join(format!("yt-dlp-{TARGET_TRIPLE}{suffix}"));
+        std::fs::write(&sidecar, b"").unwrap();
+        assert_eq!(
+            find_in(Some(&exe_dir), Some(&path_var)),
+            Some((sidecar, Origin::Sidecar))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

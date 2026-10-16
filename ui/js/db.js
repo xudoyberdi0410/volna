@@ -233,7 +233,7 @@ export class MusicDatabase {
 
         if (exists) {
             await this.performTransaction(storeName, 'readwrite', (store) => store.delete(key));
-            window.dispatchEvent(new CustomEvent('favorites-changed'));
+            window.dispatchEvent(new CustomEvent('favorites-changed', { detail: { type, item, added: false } }));
             return false; // Removed
         } else {
             const minified = this._minifyItem(type, item);
@@ -242,7 +242,7 @@ export class MusicDatabase {
                 { [type === 'playlist' ? 'uuid' : 'id']: key, addedAt: Date.now() }
             );
             await this.performTransaction(storeName, 'readwrite', (store) => store.put(entry));
-            window.dispatchEvent(new CustomEvent('favorites-changed'));
+            window.dispatchEvent(new CustomEvent('favorites-changed', { detail: { type, item, added: true } }));
             return true; // Added
         }
     }

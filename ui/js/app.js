@@ -26,6 +26,7 @@ import { showNotification } from './notifications.js';
 import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
 import './network-settings.js';
+import { initWave } from './wave.js';
 import { initTracker } from './tracker.js';
 import {
     parseCSV,
@@ -455,6 +456,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         scrobbler
     );
     initializeUIInteractions(Player.instance, MusicAPI.instance, UIRenderer.instance);
+    void initWave(Player.instance, MusicAPI.instance).catch((e) => console.error('[wave] init failed', e));
     initializeKeyboardShortcuts(Player.instance, audioPlayer);
 
     // Restore UI state for the current track (like button, theme)

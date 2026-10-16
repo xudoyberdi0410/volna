@@ -11,6 +11,10 @@ import {
 } from './icons.js';
 import { sidePanelManager } from './side-panel.js';
 import { disableBlurEffectsSettings } from './storage.js';
+import { installLyricsFetchProxy } from './lyrics-proxy.js';
+
+// Before am-lyrics loads: its providers are fetched through the Rust proxy.
+installLyricsFetchProxy();
 
 function applyBlurEffectsPreferenceToLyrics() {
     // am-lyrics renders its blur styles inside a shadow root.
@@ -113,7 +117,7 @@ class GeniusManager {
         const token = this.getToken();
 
         const url = `https://api.genius.com/search?q=${query}&access_token=${token}`;
-        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        const response = await fetch(url);
 
         if (!response.ok) throw new Error('Failed to search Genius');
 
@@ -137,7 +141,7 @@ class GeniusManager {
     async getReferents(songId) {
         const token = this.getToken();
         const url = `https://api.genius.com/referents?song_id=${songId}&text_format=plain&per_page=50&access_token=${token}`;
-        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        const response = await fetch(url);
 
         if (!response.ok) throw new Error('Failed to fetch annotations');
 
@@ -318,7 +322,7 @@ export class LyricsManager {
             if (!window._originalFetch) {
                 window._originalFetch = window.fetch;
                 window.fetch = async (url, options) => {
-                    const urlStr = url instanceof URL ? url.toString() : url.url;
+                    const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url?.url || '';
                     if (urlStr.includes('/dict/') && urlStr.includes('.dat.gz')) {
                         const filename = urlStr.split('/').pop();
                         const cdnUrl = `https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/${filename}`;
@@ -1288,6 +1292,9 @@ async function renderLyricsComponent(container, track, audioPlayer, lyricsManage
 
         await waitForLyrics();
 
+        // No synced/plain lyrics from am-lyrics' providers: show YouTube Music's.
+        void showYoutubeLyricsIfMissing(container, amLyrics, track, lyricsManager);
+
         // Convert immediately after lyrics detected
         if (lyricsManager.isRomajiMode) {
             await lyricsManager.convertLyricsContent(amLyrics);
@@ -1311,6 +1318,41 @@ async function renderLyricsComponent(container, track, audioPlayer, lyricsManage
         container.innerHTML = '<div class="lyrics-error">Failed to load lyrics</div>';
         return null;
     }
+}
+
+/** Resolves once am-lyrics has finished trying all of its providers. */
+async function amLyricsSettled(amLyrics, timeoutMs = 20000) {
+    const started = performance.now();
+    while (performance.now() - started < timeoutMs) {
+        if (!amLyrics.isConnected) return false;
+        if (amLyrics.isLoading === false) return true;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return amLyrics.isLoading === false;
+}
+
+/**
+ * am-lyrics has no source for many Uzbek/Russian songs; YouTube Music often
+ * does (Musixmatch/LyricFind, unsynced). Replace the empty component with
+ * that text, keeping the synced sources first when they exist.
+ */
+async function showYoutubeLyricsIfMissing(container, amLyrics, track, lyricsManager) {
+    if (!track?.id || typeof lyricsManager.api?.getLyrics !== 'function') return;
+    const settled = await amLyricsSettled(amLyrics);
+    if (!settled || amLyrics.lyrics?.length) return;
+    const lyrics = await lyricsManager.api.getLyrics(track.id);
+    if (!lyrics?.text || !amLyrics.isConnected || lyricsManager.currentTrackId !== track.id) return;
+
+    const plain = document.createElement('div');
+    plain.className = 'lyrics-plain';
+    plain.style.cssText =
+        'height:100%;overflow-y:auto;padding:1.5rem 1rem;white-space:pre-wrap;line-height:1.7;font-size:1.05rem;';
+    plain.textContent = lyrics.text;
+    const source = document.createElement('div');
+    source.style.cssText = 'margin-top:1.5rem;font-size:0.8rem;opacity:0.6;';
+    source.textContent = `Lyrics: ${lyrics.source} via YouTube Music (not synced)`;
+    plain.appendChild(source);
+    amLyrics.replaceWith(plain);
 }
 
 function setupSync(track, audioPlayer, amLyrics, lyricsManager) {

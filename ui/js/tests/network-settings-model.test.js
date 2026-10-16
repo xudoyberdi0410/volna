@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildConfig,
+    buildCookies,
+    cookiesForm,
+    precheckCookies,
     describeAudio,
     describeHealth,
     describeStatus,
@@ -86,6 +89,25 @@ describe('network-settings-model', () => {
             'error sending request for url (https://music.youtube.com/): client error (Connect): error connecting to socks proxy: SOCKS error';
         expect(humanizeNetError(e)).toMatch(/^Прокси не отвечает\./);
         expect(humanizeNetError('something else')).toBe('something else');
+    });
+
+    it('builds and reads the yt-dlp cookie setting', () => {
+        expect(buildCookies('none', 'x')).toEqual({ mode: 'none' });
+        expect(buildCookies('firefox')).toEqual({ mode: 'browser', value: 'firefox' });
+        expect(buildCookies('chrome', ' Profile 1 ')).toEqual({ mode: 'browser', value: 'chrome:Profile 1' });
+        expect(buildCookies('file', ' /home/u/c.txt ')).toEqual({ mode: 'file', value: '/home/u/c.txt' });
+        for (const [choice, extra] of [
+            ['none', ''],
+            ['firefox', ''],
+            ['chrome', 'Profile 1'],
+            ['file', '/home/u/c.txt'],
+        ]) {
+            expect(cookiesForm(buildCookies(choice, extra))).toEqual({ choice, extra });
+        }
+        expect(cookiesForm({ mode: 'browser', value: 'netscape' })).toEqual({ choice: 'none', extra: '' });
+        expect(cookiesForm(undefined)).toEqual({ choice: 'none', extra: '' });
+        expect(precheckCookies(buildCookies('file', ''))).toMatch(/cookies\.txt/);
+        expect(precheckCookies(buildCookies('firefox'))).toBe(null);
     });
 
     it('describes yt-dlp', () => {

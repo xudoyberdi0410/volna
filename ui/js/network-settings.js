@@ -6,11 +6,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
     buildConfig,
+    buildCookies,
+    cookiesForm,
+    describeAudio,
     describeHealth,
     describeStatus,
     describeYtDlp,
     formFromConfig,
     precheck,
+    precheckCookies,
 } from './network-settings-model.js';
 import '../network-settings.css';
 
@@ -42,6 +46,13 @@ class NetworkSettings {
             logsBtn: $('net-logs-btn'),
             ytdlp: $('ytdlp-version'),
             ytdlpUpdate: $('ytdlp-update-btn'),
+            cookies: $('net-cookies-select'),
+            cookiesExtraField: $('net-cookies-extra-field'),
+            cookiesExtra: $('net-cookies-extra'),
+            cookiesExtraLabel: $('net-cookies-extra-label'),
+            cookiesExtraHint: $('net-cookies-extra-hint'),
+            cookiesBtn: $('net-cookies-btn'),
+            cookiesMessage: $('net-cookies-message'),
         };
         this.loaded = false;
     }
@@ -53,6 +64,8 @@ class NetworkSettings {
         el.check.addEventListener('click', () => void this.check());
         el.logsBtn.addEventListener('click', () => void this.refreshLogs());
         el.ytdlpUpdate.addEventListener('click', () => void this.updateYtDlp());
+        el.cookies.addEventListener('change', () => this.showCookieFields());
+        el.cookiesBtn.addEventListener('click', () => void this.saveCookies());
         // Load lazily, the first time the tab is opened (and again on later opens).
         document
             .querySelector('.settings-tab[data-tab="network"]')
@@ -64,6 +77,47 @@ class NetworkSettings {
         const mode = this.el.mode.value;
         this.el.urlField.hidden = mode !== 'url';
         this.el.vlessField.hidden = mode !== 'vless';
+    }
+
+    showCookieFields() {
+        const choice = this.el.cookies.value;
+        const file = choice === 'file';
+        this.el.cookiesExtraField.hidden = choice === 'none';
+        this.el.cookiesExtraLabel.textContent = file ? 'Путь к cookies.txt' : 'Профиль браузера';
+        this.el.cookiesExtraHint.textContent = file
+            ? 'Файл в формате Netscape (расширение «Get cookies.txt» и подобные)'
+            : 'Необязательно: имя профиля, если их несколько';
+        this.el.cookiesExtra.placeholder = file ? '/home/user/cookies.txt' : 'default-release';
+    }
+
+    async saveCookies() {
+        const cookies = buildCookies(this.el.cookies.value, this.el.cookiesExtra.value);
+        const msg = this.el.cookiesMessage;
+        const problem = precheckCookies(cookies);
+        if (problem) {
+            msg.textContent = problem;
+            msg.dataset.tone = 'bad';
+            return;
+        }
+        this.el.cookiesBtn.disabled = true;
+        msg.dataset.tone = '';
+        msg.textContent = 'Сохраняю…';
+        try {
+            await invoke('net_set_cookies', { cookies });
+            msg.textContent = 'Сохранено. Проверяю звук…';
+            const check = await invoke('net_audio_check');
+            const audio = describeAudio(check);
+            msg.textContent =
+                check?.kind === 'bot_check' && cookies.mode !== 'none'
+                    ? 'Звук: не играет, YouTube всё ещё просит подтвердить, что вы не бот. Войдите в YouTube в этом браузере или экспортируйте свежий cookies.txt'
+                    : `Звук: ${audio.text}`;
+            msg.dataset.tone = audio.tone;
+        } catch (e) {
+            msg.textContent = `Не удалось: ${errorText(e)}`;
+            msg.dataset.tone = 'bad';
+        } finally {
+            this.el.cookiesBtn.disabled = false;
+        }
     }
 
     setMessage(text, tone = '') {
@@ -85,6 +139,10 @@ class NetworkSettings {
                 this.el.url.value = form.url;
                 this.el.vless.value = form.vless;
                 this.showFields();
+                const c = cookiesForm(view.cookies);
+                this.el.cookies.value = c.choice;
+                this.el.cookiesExtra.value = c.extra;
+                this.showCookieFields();
                 this.loaded = true;
             }
             this.renderStatus(view.status);

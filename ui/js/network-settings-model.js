@@ -77,7 +77,7 @@ export function describeAudio(check) {
     switch (check.kind) {
         case 'bot_check':
             return {
-                text: 'не играет: YouTube требует подтвердить, что вы не бот, для этого IP. Выберите другое подключение',
+                text: 'не играет: YouTube требует подтвердить, что вы не бот, для этого IP. Выберите другое подключение или включите cookies ниже',
                 tone: 'bad',
             };
         case 'unavailable':
@@ -130,4 +130,37 @@ export function describeHealth(report, audio = null) {
 export function describeYtDlp(info) {
     const origin = { sidecar: 'встроенный', system: 'системный', configured: 'из VOLNA_YTDLP' };
     return `${info.version} · ${origin[info.origin] ?? info.origin}`;
+}
+
+// ---- yt-dlp cookies (volna_streams::Cookies) --------------------------------
+
+/** Browsers offered in the cookie selector (yt-dlp names). */
+export const COOKIE_BROWSERS = ['firefox', 'chrome', 'chromium', 'brave', 'edge', 'opera', 'vivaldi'];
+
+/**
+ * Form values -> the Cookies JSON for `net_set_cookies`.
+ * `choice` is 'none', 'file' or a browser name; `extra` is the cookies.txt
+ * path for 'file', or an optional profile for a browser.
+ */
+export function buildCookies(choice, extra = '') {
+    const value = extra.trim();
+    if (choice === 'none') return { mode: 'none' };
+    if (choice === 'file') return { mode: 'file', value };
+    return { mode: 'browser', value: value ? `${choice}:${value}` : choice };
+}
+
+/** Saved Cookies JSON -> form values. */
+export function cookiesForm(cookies) {
+    if (cookies?.mode === 'file') return { choice: 'file', extra: cookies.value ?? '' };
+    if (cookies?.mode === 'browser' && cookies.value) {
+        const [name, ...profile] = String(cookies.value).split(':');
+        if (COOKIE_BROWSERS.includes(name)) return { choice: name, extra: profile.join(':') };
+    }
+    return { choice: 'none', extra: '' };
+}
+
+/** Client-side check before Rust validates again. Returns an error or null. */
+export function precheckCookies(cookies) {
+    if (cookies.mode === 'file' && !cookies.value) return 'Укажите путь к cookies.txt';
+    return null;
 }

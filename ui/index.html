@@ -4556,6 +4556,56 @@
                             <div class="settings-group">
                                 <div class="setting-item">
                                     <div class="info">
+                                        <span class="label">Cookies YouTube для звука</span>
+                                        <span class="description"
+                                            >Если YouTube просит «подтвердить, что вы не бот» (часто через VPS), yt-dlp
+                                            может взять cookies из браузера, где вы вошли в YouTube. Они не покидают
+                                            компьютер.</span
+                                        >
+                                    </div>
+                                    <select id="net-cookies-select">
+                                        <option value="none">Не использовать</option>
+                                        <option value="firefox">Firefox</option>
+                                        <option value="chrome">Chrome</option>
+                                        <option value="chromium">Chromium</option>
+                                        <option value="brave">Brave</option>
+                                        <option value="edge">Edge</option>
+                                        <option value="opera">Opera</option>
+                                        <option value="vivaldi">Vivaldi</option>
+                                        <option value="file">Файл cookies.txt</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item net-field" id="net-cookies-extra-field" hidden>
+                                    <div class="info">
+                                        <span class="label" id="net-cookies-extra-label">Профиль браузера</span>
+                                        <span class="description" id="net-cookies-extra-hint"
+                                            >Необязательно: имя профиля, если их несколько</span
+                                        >
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="net-cookies-extra"
+                                        class="template-input"
+                                        spellcheck="false"
+                                        autocomplete="off"
+                                    />
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span
+                                            class="description net-message"
+                                            id="net-cookies-message"
+                                            role="status"
+                                        ></span>
+                                    </div>
+                                    <div class="net-actions">
+                                        <button id="net-cookies-btn" class="btn-secondary">
+                                            Сохранить и проверить
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
                                         <span class="label">yt-dlp</span>
                                         <span class="description" id="ytdlp-version">…</span>
                                     </div>

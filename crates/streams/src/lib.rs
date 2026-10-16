@@ -3,7 +3,8 @@
 //! Resolves a `videoId` to a googlevideo audio URL (through the same proxy
 //! as everything else, since the URLs are IP-bound), caches results until
 //! shortly before their `expire`, and backs the `volna://stream/<videoId>`
-//! protocol with HTTP Range support. Also proxies cover images with an
+//! protocol and a loopback HTTP server (what `<audio>` plays from) with
+//! HTTP Range support. Also proxies cover images with an
 //! on-disk cache and handles yt-dlp self-updates.
 //!
 //! ```no_run
@@ -30,11 +31,16 @@ mod error;
 pub mod image;
 pub mod range;
 mod resolver;
+mod server;
 mod stream;
 pub mod ytdlp;
 
 pub use error::{Result, StreamError};
 pub use image::{Image, ImageCache};
 pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Resolver};
-pub use stream::{DEFAULT_CHUNK_CAP, Network, StreamRequest, StreamResponse, StreamService};
+pub use server::LoopbackServer;
+pub use stream::{
+    BodyStream, DEFAULT_CHUNK_CAP, Network, OpenStream, StreamRequest, StreamResponse,
+    StreamService,
+};
 pub use ytdlp::{Origin, Quality, ResolvedStream, UpdateReport, VideoId, YtDlp};

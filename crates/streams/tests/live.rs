@@ -86,3 +86,32 @@ async fn proxies_and_caches_a_real_cover() {
     assert_eq!(first.bytes, second.bytes);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[tokio::test]
+#[ignore = "network + yt-dlp"]
+async fn loopback_server_streams_a_real_track() {
+    let svc = StreamService::new(YtDlp::locate(None).unwrap(), net());
+    let server = volna_streams::LoopbackServer::bind().unwrap();
+    let url = format!("{}/{VIDEO}", server.stream_base());
+    tokio::spawn(server.serve(svc));
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+
+    let res = http
+        .get(&url)
+        .header("Range", "bytes=0-65535")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 206);
+    let cr = res.headers()["content-range"].to_str().unwrap().to_owned();
+    let total: usize = cr.rsplit('/').next().unwrap().parse().unwrap();
+    assert_eq!(res.bytes().await.unwrap().len(), 65536);
+
+    // The whole track in one streamed response, as <audio> would read it.
+    let t = Instant::now();
+    let res = http.get(&url).send().await.unwrap();
+    assert_eq!(res.status(), 200);
+    let body = res.bytes().await.unwrap();
+    println!("full track {} bytes in {:?}", body.len(), t.elapsed());
+    assert_eq!(body.len(), total);
+}

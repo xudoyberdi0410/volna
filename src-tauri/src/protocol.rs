@@ -9,6 +9,9 @@
 
 use http::{Request, Response, StatusCode, header};
 
+use crate::media;
+use crate::state::AppState;
+
 /// Host used by WebView2 for custom schemes (`http://<scheme>.localhost/`).
 const WINDOWS_HOST: &str = "volna.localhost";
 
@@ -19,6 +22,8 @@ pub enum Route {
     Api,
     /// Audio bytes with Range support (`volna://stream/<videoId>`).
     Stream,
+    /// Proxied cover images (`volna://img/?u=<urlencoded>&s=<px>`).
+    Img,
 }
 
 /// A parsed `volna://` request target.
@@ -51,6 +56,7 @@ impl Target {
         let route = match route_name.to_ascii_lowercase().as_str() {
             "api" => Route::Api,
             "stream" => Route::Stream,
+            "img" => Route::Img,
             _ => return None,
         };
 
@@ -62,8 +68,8 @@ impl Target {
     }
 }
 
-/// Dispatches a protocol request. Currently every known route answers 501.
-pub async fn handle(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+/// Dispatches a protocol request. `api` still answers 501.
+pub async fn handle(state: &AppState, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if request.method() == http::Method::OPTIONS {
         return with_cors(Response::builder().status(StatusCode::NO_CONTENT))
             .body(Vec::new())
@@ -71,6 +77,10 @@ pub async fn handle(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }
 
     match Target::parse(request.uri()) {
+        Some(target) if target.route == Route::Stream => {
+            media::stream(state, &target, &request).await
+        }
+        Some(target) if target.route == Route::Img => media::image(state, &target).await,
         Some(target) => {
             tracing::debug!(?target, "volna:// request (not implemented)");
             json_error(
@@ -82,18 +92,18 @@ pub async fn handle(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }
 }
 
-fn with_cors(builder: http::response::Builder) -> http::response::Builder {
+pub(crate) fn with_cors(builder: http::response::Builder) -> http::response::Builder {
     builder
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
         .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
         .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
         .header(
             header::ACCESS_CONTROL_EXPOSE_HEADERS,
-            "Content-Length, Content-Range, Accept-Ranges",
+            "Content-Length, Content-Range, Accept-Ranges, Content-Type",
         )
 }
 
-fn json_error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
+pub(crate) fn json_error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
     let body = serde_json::to_vec(&serde_json::json!({
         "status": status.as_u16(),
         "error": message,
@@ -107,8 +117,14 @@ fn json_error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// App state with a throwaway cache dir, as `setup` would build it.
+    pub(crate) fn test_state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("volna-test-cache-{}", std::process::id()));
+        AppState::new(&dir).unwrap()
+    }
 
     fn parse(uri: &str) -> Option<Target> {
         Target::parse(&uri.parse().unwrap())
@@ -145,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn known_route_answers_501_json_with_cors() {
         let req = Request::get("volna://api/info/").body(Vec::new()).unwrap();
-        let res = handle(req).await;
+        let res = handle(&test_state(), req).await;
         assert_eq!(res.status(), StatusCode::NOT_IMPLEMENTED);
         assert_eq!(res.headers()[header::CONTENT_TYPE], "application/json");
         assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
@@ -156,6 +172,9 @@ mod tests {
     #[tokio::test]
     async fn unknown_route_answers_404() {
         let req = Request::get("volna://nope/").body(Vec::new()).unwrap();
-        assert_eq!(handle(req).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            handle(&test_state(), req).await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 }

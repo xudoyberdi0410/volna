@@ -61,7 +61,7 @@ const POPULAR_ARTISTS: &[&str] = &[
     "Ummon",
     "Macan",
     "Dua Lipa",
-    "Konsta",
+    "Баста",
     "Imagine Dragons",
     "Kino",
     "Ulug'bek Rahmatullayev",
@@ -289,6 +289,11 @@ fn russian_label(title: &str) -> String {
         "Blues" => "Блюз",
         "Country & Americana" => "Кантри",
         "Reggae & caribbean" => "Регги",
+        "African" => "Африканская",
+        "Autumn" => "Осень",
+        "Bollywood & Indian" => "Индийская",
+        "Mandopop & cantopop" => "Китайская",
+        "Korean hip-hop" => "Корейский хип-хоп",
         other => other,
     }
     .to_owned()
@@ -385,12 +390,19 @@ pub async fn wave_artist_search(
         .search(query, SearchFilter::Artists)
         .await
         .map_err(err)?;
-    Ok(artist_cards(page.items).into_iter().take(18).collect())
+    Ok(dedup_cards(artist_cards(page.items))
+        .into_iter()
+        .take(18)
+        .collect())
 }
 
+/// One tile per artist: YouTube often lists an artist's channel and its
+/// "- Topic" twin under the same name.
 fn dedup_cards(mut cards: Vec<ArtistCard>) -> Vec<ArtistCard> {
     let mut seen = std::collections::HashSet::new();
-    cards.retain(|c| seen.insert(c.id.clone()));
+    cards.retain(|c| {
+        seen.insert(c.id.clone()) && seen.insert(format!("name:{}", c.name.to_lowercase()))
+    });
     cards
 }
 

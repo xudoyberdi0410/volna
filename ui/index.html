@@ -1955,6 +1955,7 @@
                         <button class="settings-tab" data-tab="scrobbling">Scrobbling</button>
                         <button class="settings-tab" data-tab="audio">Audio</button>
                         <button class="settings-tab" data-tab="system">System</button>
+                        <button class="settings-tab" data-tab="network">Сеть</button>
                     </div>
                     <div class="settings-tab-content active" id="settings-tab-appearance">
                         <div class="settings-list">
@@ -4579,6 +4580,88 @@
                                     padding: 1rem 0 0.5rem;
                                 "
                             ></p>
+                        </div>
+                    </div>
+                    <div class="settings-tab-content" id="settings-tab-network">
+                        <div class="settings-list">
+                            <div class="settings-group">
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="label">Подключение</span>
+                                        <span class="description" id="net-status">Загрузка…</span>
+                                    </div>
+                                    <select id="net-mode-select">
+                                        <option value="direct">Напрямую</option>
+                                        <option value="url">Прокси URL</option>
+                                        <option value="vless">VLESS-ссылка</option>
+                                    </select>
+                                </div>
+                                <div class="setting-item net-field" id="net-url-field" hidden>
+                                    <div class="info">
+                                        <span class="label">Адрес прокси</span>
+                                        <span class="description"
+                                            >socks5://, socks5h:// (DNS на стороне прокси), http:// или https://; можно
+                                            с user:pass@</span
+                                        >
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="net-url-input"
+                                        class="template-input"
+                                        placeholder="socks5h://127.0.0.1:1080"
+                                        spellcheck="false"
+                                        autocomplete="off"
+                                    />
+                                </div>
+                                <div class="setting-item net-field net-field-wide" id="net-vless-field" hidden>
+                                    <div class="info">
+                                        <span class="label">VLESS-ссылка</span>
+                                        <span class="description"
+                                            >Ссылка vless://… из 3x-ui или клиента. Приложение само запустит xray и
+                                            пустит через него каталог, обложки и звук.</span
+                                        >
+                                    </div>
+                                    <textarea
+                                        id="net-vless-input"
+                                        class="template-input net-vless-input"
+                                        rows="4"
+                                        placeholder="vless://uuid@host:443?security=reality&amp;type=xhttp&amp;…#name"
+                                        spellcheck="false"
+                                        autocomplete="off"
+                                    ></textarea>
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="description net-message" id="net-message" role="status"></span>
+                                    </div>
+                                    <div class="net-actions">
+                                        <button id="net-check-btn" class="btn-secondary">Проверить</button>
+                                        <button id="net-apply-btn" class="btn-primary">Применить</button>
+                                    </div>
+                                </div>
+                                <div class="net-health" id="net-health" hidden></div>
+                            </div>
+
+                            <div class="settings-group" id="net-xray-group" hidden>
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="label">Журнал xray</span>
+                                        <span class="description">Последние строки вывода встроенного xray</span>
+                                    </div>
+                                    <button id="net-logs-btn" class="btn-secondary">Обновить</button>
+                                </div>
+                                <pre class="net-logs" id="net-logs"></pre>
+                            </div>
+
+                            <div class="settings-group">
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="label">yt-dlp</span>
+                                        <span class="description" id="ytdlp-version">…</span>
+                                    </div>
+                                    <button id="ytdlp-update-btn" class="btn-secondary">Обновить yt-dlp</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

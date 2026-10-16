@@ -25,6 +25,7 @@ import { db } from './db.js';
 import { showNotification } from './notifications.js';
 import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
+import './network-settings.js';
 import { initTracker } from './tracker.js';
 import {
     parseCSV,

@@ -12,7 +12,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.90"
 
 [workspace.dependencies]
 volna-ytm = { path = "crates/ytm" }

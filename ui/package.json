@@ -17,7 +17,7 @@
         "lint:html": "htmlhint \"**/*.html\" --ignore=\"dist/**,legacy/**,node_modules/**\"",
         "lint": "bun run lint:js && bun run lint:css && bun run lint:html",
         "format": "prettier --write .",
-        "tauri": "tauri",
+        "tauri": "TAURI_APP_PATH=../src-tauri TAURI_FRONTEND_PATH=. tauri",
         "test:node": "vitest run --config=vite.config.ts --browser.enabled=false"
     },
     "repository": {

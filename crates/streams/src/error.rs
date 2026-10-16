@@ -23,7 +23,12 @@ pub enum StreamError {
     #[error("video unavailable: {0}")]
     Unavailable(String),
 
-    /// yt-dlp failed for another reason (bot check, outdated extractor, ...).
+    /// YouTube refused this exit IP ("Sign in to confirm you're not a bot").
+    /// Another network route or browser cookies are needed.
+    #[error("YouTube bot check: {0}")]
+    BotCheck(String),
+
+    /// yt-dlp failed for another reason (outdated extractor, ...).
     #[error("yt-dlp failed: {0}")]
     YtDlpFailed(String),
 
@@ -51,7 +56,7 @@ impl StreamError {
     pub fn http_status(&self) -> u16 {
         match self {
             Self::InvalidVideoId(_) | Self::InvalidUrl(_) => 400,
-            Self::HostNotAllowed(_) => 403,
+            Self::HostNotAllowed(_) | Self::BotCheck(_) => 403,
             Self::Unavailable(_) => 404,
             Self::RangeNotSatisfiable { .. } => 416,
             Self::YtDlpNotFound | Self::YtDlpSpawn(_) => 500,
@@ -61,6 +66,31 @@ impl StreamError {
             | Self::Http(_)
             | Self::UpstreamStatus(_)
             | Self::ImageTooLarge(_) => 502,
+        }
+    }
+}
+
+/// Why a track could not be resolved, in the terms the UI explains to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// The exit IP is flagged by YouTube; see [`StreamError::BotCheck`].
+    BotCheck,
+    /// The video is gone, private or blocked in this region.
+    Unavailable,
+    /// yt-dlp is missing or could not be started.
+    NoYtDlp,
+    /// Anything else (timeouts, extractor breakage, network errors).
+    Other,
+}
+
+impl StreamError {
+    pub fn kind(&self) -> FailureKind {
+        match self {
+            Self::BotCheck(_) => FailureKind::BotCheck,
+            Self::Unavailable(_) => FailureKind::Unavailable,
+            Self::YtDlpNotFound | Self::YtDlpSpawn(_) => FailureKind::NoYtDlp,
+            _ => FailureKind::Other,
         }
     }
 }

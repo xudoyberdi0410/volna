@@ -35,9 +35,9 @@ mod server;
 mod stream;
 pub mod ytdlp;
 
-pub use error::{Result, StreamError};
+pub use error::{FailureKind, Result, StreamError};
 pub use image::{Image, ImageCache};
-pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Resolver};
+pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Failure, Resolver};
 pub use server::LoopbackServer;
 pub use stream::{
     BodyStream, DEFAULT_CHUNK_CAP, Network, OpenStream, StreamRequest, StreamResponse,

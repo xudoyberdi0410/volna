@@ -177,6 +177,9 @@ fn classify_failure(stderr: &str) -> StreamError {
         .trim()
         .to_owned();
     let lower = message.to_ascii_lowercase();
+    if lower.contains("confirm you") && lower.contains("not a bot") {
+        return StreamError::BotCheck(message);
+    }
     let unavailable = [
         "video unavailable",
         "private video",
@@ -488,7 +491,15 @@ mod tests {
         let e = classify_failure(
             "ERROR: [youtube] abc: Sign in to confirm you're not a bot. This video is not available",
         );
-        assert!(matches!(e, StreamError::YtDlpFailed(_)));
+        assert!(matches!(e, StreamError::BotCheck(_)));
+        // yt-dlp prints a typographic apostrophe.
+        let e =
+            classify_failure("ERROR: [youtube] abc: Sign in to confirm you\u{2019}re not a bot.");
+        assert!(matches!(e, StreamError::BotCheck(_)));
+        assert_eq!(e.kind(), crate::FailureKind::BotCheck);
+        assert_eq!(e.http_status(), 403);
+        let e = classify_failure("ERROR: [youtube] abc: Requested format is not available");
+        assert!(matches!(e, StreamError::Unavailable(_)));
         assert!(matches!(classify_failure(""), StreamError::YtDlpFailed(m) if m == "no output"));
     }
 

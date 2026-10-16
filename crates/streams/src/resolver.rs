@@ -6,7 +6,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use crate::error::Result;
+use crate::error::{FailureKind, Result};
 use crate::ytdlp::{Quality, ResolvedStream, VideoId, YtDlp};
 
 /// Re-resolve this long before googlevideo's `expire`, so a track that
@@ -39,6 +39,14 @@ impl Backend for YtDlp {
 
 type Key = (VideoId, Quality);
 
+/// The last resolve error for a video, kept so the UI can explain why a
+/// track does not play (`<audio>` only sees a bare HTTP error).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Failure {
+    pub kind: FailureKind,
+    pub message: String,
+}
+
 #[derive(Clone)]
 struct Cached {
     stream: Arc<ResolvedStream>,
@@ -54,6 +62,7 @@ type Slot = Arc<tokio::sync::Mutex<Option<Cached>>>;
 pub struct Resolver<B> {
     backend: B,
     slots: Mutex<HashMap<Key, Slot>>,
+    failures: Mutex<HashMap<VideoId, Failure>>,
     margin: Duration,
 }
 
@@ -66,6 +75,7 @@ impl<B: Backend> Resolver<B> {
         Self {
             backend,
             slots: Mutex::new(HashMap::new()),
+            failures: Mutex::new(HashMap::new()),
             margin,
         }
     }
@@ -88,7 +98,14 @@ impl<B: Backend> Resolver<B> {
         {
             return Ok(c.stream.clone());
         }
-        let stream = Arc::new(self.backend.resolve(id, quality, proxy).await?);
+        let stream = match self.backend.resolve(id, quality, proxy).await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                self.record_failure(id, Some(&e));
+                return Err(e);
+            }
+        };
+        self.record_failure(id, None);
         *cached = Some(Cached {
             stream: stream.clone(),
             proxy: proxy.map(str::to_owned),
@@ -114,6 +131,38 @@ impl<B: Backend> Resolver<B> {
         let mut slots = self.lock_slots();
         tracing::debug!(entries = slots.len(), "clearing the stream URL cache");
         slots.clear();
+        self.lock_failures().clear();
+    }
+
+    /// Why the last resolve of `id` failed, if it did (cleared on success
+    /// and by [`Resolver::clear`]).
+    pub fn last_failure(&self, id: &VideoId) -> Option<Failure> {
+        self.lock_failures().get(id).cloned()
+    }
+
+    fn record_failure(&self, id: &VideoId, error: Option<&crate::StreamError>) {
+        let mut failures = self.lock_failures();
+        match error {
+            None => {
+                failures.remove(id);
+            }
+            Some(e) => {
+                if failures.len() >= PRUNE_THRESHOLD {
+                    failures.clear();
+                }
+                failures.insert(
+                    id.clone(),
+                    Failure {
+                        kind: e.kind(),
+                        message: e.to_string(),
+                    },
+                );
+            }
+        }
+    }
+
+    fn lock_failures(&self) -> std::sync::MutexGuard<'_, HashMap<VideoId, Failure>> {
+        self.failures.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Number of keys with a slot (cached or resolving). For tests and stats.
@@ -299,5 +348,23 @@ mod tests {
         assert!(r.get(&id(), Quality::High, None).await.is_err());
         assert!(r.get(&id(), Quality::High, None).await.is_err());
         assert_eq!(r.backend().calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn remembers_why_a_resolve_failed() {
+        let mut fake = Fake::new(Duration::from_secs(3600));
+        fake.fail = true;
+        let r = Resolver::new(fake);
+        assert_eq!(r.last_failure(&id()), None);
+        let _ = r.get(&id(), Quality::High, None).await;
+        let f = r.last_failure(&id()).expect("failure recorded");
+        assert_eq!(f.kind, FailureKind::Other);
+        assert!(f.message.contains("boom"), "{}", f.message);
+        r.clear();
+        assert_eq!(r.last_failure(&id()), None);
+
+        let ok = Resolver::new(Fake::new(Duration::from_secs(3600)));
+        ok.get(&id(), Quality::High, None).await.unwrap();
+        assert_eq!(ok.last_failure(&id()), None);
     }
 }

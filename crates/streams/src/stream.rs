@@ -177,6 +177,11 @@ impl<B: Backend, N: Network> StreamService<B, N> {
         self.inner.resolver.get(id, quality, proxy.as_deref()).await
     }
 
+    /// Why the last resolve of `id` failed, if it did.
+    pub fn last_failure(&self, id: &VideoId) -> Option<crate::Failure> {
+        self.inner.resolver.last_failure(id)
+    }
+
     /// Drops every cached stream URL. Call after switching the network.
     pub fn clear_cache(&self) {
         self.inner.resolver.clear();

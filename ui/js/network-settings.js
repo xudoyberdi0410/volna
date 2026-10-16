@@ -144,9 +144,12 @@ class NetworkSettings {
         this.el.health.dataset.tone = '';
         this.el.health.textContent = 'Проверяю music.youtube.com…';
         try {
+            const audio = invoke('net_audio_check').catch((e) => ({ ok: false, kind: 'other', message: errorText(e) }));
             const report = await invoke('net_health');
             if (busy) this.setMessage('');
-            return this.renderHealth(report);
+            if (!report.ok) return this.renderHealth(report);
+            this.renderHealth(report, 'pending');
+            return this.renderHealth(report, await audio);
         } catch (e) {
             this.el.health.textContent = `Ошибка проверки: ${errorText(e)}`;
             this.el.health.dataset.tone = 'bad';
@@ -156,8 +159,8 @@ class NetworkSettings {
         }
     }
 
-    renderHealth(report) {
-        const { tone, rows } = describeHealth(report);
+    renderHealth(report, audio = null) {
+        const { tone, rows } = describeHealth(report, audio);
         const dl = document.createElement('dl');
         for (const [k, v] of rows) {
             const dt = document.createElement('dt');

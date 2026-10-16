@@ -63,8 +63,46 @@ export function describeStatus(status) {
     return parts.join(' · ');
 }
 
-/** Turns a HealthReport into display rows plus an overall tone. */
-export function describeHealth(report) {
+const TONE_RANK = { good: 0, warn: 1, bad: 2 };
+const worse = (a, b) => (TONE_RANK[b] > TONE_RANK[a] ? b : a);
+
+/**
+ * The «Звук» row: can yt-dlp resolve audio through this connection?
+ * `check` is the result of `net_audio_check`, or `'pending'` while it runs.
+ */
+export function describeAudio(check) {
+    if (check === 'pending') return { text: 'проверяю…', tone: 'good' };
+    if (!check) return { text: 'неизвестно', tone: 'warn' };
+    if (check.ok) return { text: `работает (${check.latency_ms} мс)`, tone: 'good' };
+    switch (check.kind) {
+        case 'bot_check':
+            return {
+                text: 'не играет: YouTube требует подтвердить, что вы не бот, для этого IP. Выберите другое подключение',
+                tone: 'bad',
+            };
+        case 'unavailable':
+            return { text: 'не удалось проверить (тестовый трек недоступен)', tone: 'warn' };
+        case 'no_yt_dlp':
+            return { text: 'yt-dlp не найден', tone: 'bad' };
+        default:
+            return { text: `ошибка: ${check.message ?? 'неизвестная'}`, tone: 'bad' };
+    }
+}
+
+/** Shortens the reqwest error chain for the most common proxy failures. */
+export function humanizeNetError(error) {
+    const e = String(error ?? '');
+    if (/socks proxy|proxy.*(refused|connect)|tunnel/i.test(e)) return `Прокси не отвечает. ${e}`;
+    if (/timed? ?out/i.test(e)) return `Нет ответа (тайм-аут). ${e}`;
+    if (/dns|resolve|lookup/i.test(e)) return `Не удалось найти адрес (DNS). ${e}`;
+    return e;
+}
+
+/**
+ * Turns a HealthReport (and, optionally, the audio check) into display rows
+ * plus an overall tone.
+ */
+export function describeHealth(report, audio = null) {
     const ytm =
         report.ytm_available === true
             ? 'доступна'
@@ -76,9 +114,15 @@ export function describeHealth(report) {
         ['Задержка', report.latency_ms != null ? `${report.latency_ms} мс` : '—'],
         ['YouTube Music', ytm],
     ];
-    if (report.error) rows.push(['Ошибка', report.error]);
     let tone = 'bad';
     if (report.ok && report.ytm_available !== false) tone = report.ytm_available ? 'good' : 'warn';
+    // Without a connection the audio check says nothing new.
+    if (audio !== null && report.ok) {
+        const a = describeAudio(audio);
+        rows.push(['Звук', a.text]);
+        tone = worse(tone, a.tone);
+    }
+    if (report.error) rows.push(['Ошибка', humanizeNetError(report.error)]);
     return { tone, rows };
 }
 

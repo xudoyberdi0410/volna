@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildConfig,
+    describeAudio,
     describeHealth,
     describeStatus,
+    humanizeNetError,
     describeYtDlp,
     formFromConfig,
     precheck,
@@ -60,8 +62,30 @@ describe('network-settings-model', () => {
         expect(describeHealth({ ok: true, ytm_available: null }).tone).toBe('warn');
         const failed = describeHealth({ ok: false, error: 'timeout' });
         expect(failed.tone).toBe('bad');
-        expect(failed.rows).toContainEqual(['Ошибка', 'timeout']);
+        expect(failed.rows).toContainEqual(['Ошибка', 'Нет ответа (тайм-аут). timeout']);
         expect(failed.rows).toContainEqual(['Внешний IP', '—']);
+    });
+
+    it('adds the audio check and lets a bot check spoil the tone', () => {
+        const report = { ok: true, latency_ms: 500, exit_ip: '1.2.3.4', ytm_available: true };
+        const ok = describeHealth(report, { ok: true, latency_ms: 2900 });
+        expect(ok.tone).toBe('good');
+        expect(ok.rows).toContainEqual(['Звук', 'работает (2900 мс)']);
+
+        const bot = describeHealth(report, { ok: false, kind: 'bot_check', message: 'x', latency_ms: 3 });
+        expect(bot.tone).toBe('bad');
+        expect(bot.rows.find(([k]) => k === 'Звук')[1]).toMatch(/не бот/);
+
+        expect(describeHealth(report, 'pending').rows).toContainEqual(['Звук', 'проверяю…']);
+        expect(describeHealth({ ok: false, error: 'x' }, { ok: true }).rows.some(([k]) => k === 'Звук')).toBe(false);
+        expect(describeAudio({ ok: false, kind: 'unavailable' }).tone).toBe('warn');
+    });
+
+    it('explains proxy connection errors', () => {
+        const e =
+            'error sending request for url (https://music.youtube.com/): client error (Connect): error connecting to socks proxy: SOCKS error';
+        expect(humanizeNetError(e)).toMatch(/^Прокси не отвечает\./);
+        expect(humanizeNetError('something else')).toBe('something else');
     });
 
     it('describes yt-dlp', () => {

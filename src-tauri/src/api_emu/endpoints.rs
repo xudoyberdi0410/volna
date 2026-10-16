@@ -344,15 +344,16 @@ impl ApiEmu {
         Ok(json!({ "version": VERSION, "artists": artists }))
     }
 
-    /// `/artist/bio/?id=` (§3.10).
+    /// `/artist/bio/?id=` (§3.10). `data: null` when YouTube has no
+    /// description (the UI then shows none, without logging an error).
     async fn artist_bio(&self, id: &str) -> ApiResult<Value> {
         let artist = self.artist(id).await?;
-        let text = artist
+        let data = artist
             .description
             .as_deref()
             .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| ApiError::NotFound(format!("biography of {id}")))?;
-        Ok(json!({ "version": VERSION, "data": { "text": text, "source": "YouTube Music" } }))
+            .map(|text| json!({ "text": text, "source": "YouTube Music" }));
+        Ok(json!({ "version": VERSION, "data": data }))
     }
 
     /// `/playlist/?id=[&offset=]` (§3.6). Radio ids are served as a

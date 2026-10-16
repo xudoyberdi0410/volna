@@ -49,13 +49,16 @@ pub enum StreamError {
 
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
+
+    #[error("invalid cookie setting: {0}")]
+    InvalidCookies(String),
 }
 
 impl StreamError {
     /// The HTTP status the `volna://` handler should answer with.
     pub fn http_status(&self) -> u16 {
         match self {
-            Self::InvalidVideoId(_) | Self::InvalidUrl(_) => 400,
+            Self::InvalidVideoId(_) | Self::InvalidUrl(_) | Self::InvalidCookies(_) => 400,
             Self::HostNotAllowed(_) | Self::BotCheck(_) => 403,
             Self::Unavailable(_) => 404,
             Self::RangeNotSatisfiable { .. } => 416,

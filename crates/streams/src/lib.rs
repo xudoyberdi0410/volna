@@ -43,4 +43,6 @@ pub use stream::{
     BodyStream, DEFAULT_CHUNK_CAP, Network, OpenStream, StreamRequest, StreamResponse,
     StreamService,
 };
-pub use ytdlp::{Origin, Quality, ResolvedStream, UpdateReport, VideoId, YtDlp};
+pub use ytdlp::{
+    COOKIE_BROWSERS, Cookies, Origin, Quality, ResolvedStream, UpdateReport, VideoId, YtDlp,
+};

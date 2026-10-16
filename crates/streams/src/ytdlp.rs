@@ -80,6 +80,76 @@ impl Quality {
     }
 }
 
+/// Where yt-dlp takes YouTube cookies from. From datacenter IPs (a VPS
+/// behind a VLESS link) YouTube answers most videos with "Sign in to confirm
+/// you're not a bot"; a logged-in browser session gets past it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", content = "value", rename_all = "lowercase")]
+pub enum Cookies {
+    #[default]
+    None,
+    /// `--cookies-from-browser`: a browser name, optionally `name:profile`.
+    Browser(String),
+    /// `--cookies`: a Netscape cookies.txt (yt-dlp also writes it back).
+    File(PathBuf),
+}
+
+/// Browsers yt-dlp can read cookies from.
+pub const COOKIE_BROWSERS: &[&str] = &[
+    "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
+];
+
+impl Cookies {
+    /// Checks the setting before it is used or saved.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::None => Ok(()),
+            Self::Browser(spec) => {
+                let (name, profile) = match spec.split_once(':') {
+                    Some((n, p)) => (n, Some(p)),
+                    None => (spec.as_str(), None),
+                };
+                if !COOKIE_BROWSERS.contains(&name) {
+                    return Err(StreamError::InvalidCookies(format!(
+                        "unknown browser {name:?} (expected one of {})",
+                        COOKIE_BROWSERS.join(", ")
+                    )));
+                }
+                if profile.is_some_and(|p| p.is_empty() || p.contains(['\n', '\r'])) {
+                    return Err(StreamError::InvalidCookies(
+                        "empty or invalid profile".into(),
+                    ));
+                }
+                Ok(())
+            }
+            Self::File(path) => {
+                if path.is_file() {
+                    Ok(())
+                } else {
+                    Err(StreamError::InvalidCookies(format!(
+                        "{} is not a file",
+                        path.display()
+                    )))
+                }
+            }
+        }
+    }
+
+    fn push_args(&self, args: &mut Vec<String>) {
+        match self {
+            Self::None => {}
+            Self::Browser(spec) => {
+                args.push("--cookies-from-browser".into());
+                args.push(spec.clone());
+            }
+            Self::File(path) => {
+                args.push("--cookies".into());
+                args.push(path.display().to_string());
+            }
+        }
+    }
+}
+
 /// A playable googlevideo URL plus what we know about it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ResolvedStream {
@@ -225,6 +295,8 @@ pub struct YtDlp {
     binary: PathBuf,
     origin: Origin,
     timeout: Duration,
+    /// Shared by clones, so a change applies to the running service.
+    cookies: std::sync::Arc<std::sync::RwLock<Cookies>>,
 }
 
 impl YtDlp {
@@ -253,6 +325,7 @@ impl YtDlp {
             binary,
             origin,
             timeout: DEFAULT_RESOLVE_TIMEOUT,
+            cookies: Default::default(),
         })
     }
 
@@ -269,8 +342,27 @@ impl YtDlp {
         self.origin
     }
 
+    pub fn cookies(&self) -> Cookies {
+        self.cookies
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Validates and switches the cookie source for later resolves.
+    pub fn set_cookies(&self, cookies: Cookies) -> Result<()> {
+        cookies.validate()?;
+        *self.cookies.write().unwrap_or_else(|e| e.into_inner()) = cookies;
+        Ok(())
+    }
+
     /// The arguments for resolving `id` (without the binary itself).
-    pub fn resolve_args(id: &VideoId, quality: Quality, proxy: Option<&str>) -> Vec<String> {
+    pub fn resolve_args(
+        id: &VideoId,
+        quality: Quality,
+        proxy: Option<&str>,
+        cookies: &Cookies,
+    ) -> Vec<String> {
         let mut args: Vec<String> = [
             "--ignore-config",
             "--no-playlist",
@@ -285,6 +377,7 @@ impl YtDlp {
             args.push("--proxy".into());
             args.push(proxy.into());
         }
+        cookies.push_args(&mut args);
         args.push("--".into());
         args.push(id.watch_url());
         args
@@ -300,7 +393,10 @@ impl YtDlp {
     ) -> Result<ResolvedStream> {
         let started = std::time::Instant::now();
         let output = self
-            .run(Self::resolve_args(id, quality, proxy), self.timeout)
+            .run(
+                Self::resolve_args(id, quality, proxy, &self.cookies()),
+                self.timeout,
+            )
             .await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -469,7 +565,7 @@ mod tests {
     #[test]
     fn builds_args_with_and_without_proxy() {
         let id = VideoId::parse("dQw4w9WgXcQ").unwrap();
-        let direct = YtDlp::resolve_args(&id, Quality::High, None);
+        let direct = YtDlp::resolve_args(&id, Quality::High, None, &Cookies::None);
         assert!(!direct.contains(&"--proxy".to_owned()));
         assert_eq!(
             direct.last().unwrap(),
@@ -478,10 +574,78 @@ mod tests {
         let f = direct.iter().position(|a| a == "-f").unwrap();
         assert_eq!(direct[f + 1], Quality::High.format_selector());
 
-        let proxied = YtDlp::resolve_args(&id, Quality::Low, Some("socks5h://u:p@127.0.0.1:1"));
+        let proxied = YtDlp::resolve_args(
+            &id,
+            Quality::Low,
+            Some("socks5h://u:p@127.0.0.1:1"),
+            &Cookies::None,
+        );
         let p = proxied.iter().position(|a| a == "--proxy").unwrap();
         assert_eq!(proxied[p + 1], "socks5h://u:p@127.0.0.1:1");
         assert!(proxied.contains(&Quality::Low.format_selector().to_owned()));
+        assert!(!proxied.iter().any(|a| a.starts_with("--cookies")));
+
+        let browser = YtDlp::resolve_args(
+            &id,
+            Quality::High,
+            None,
+            &Cookies::Browser("firefox".into()),
+        );
+        let c = browser
+            .iter()
+            .position(|a| a == "--cookies-from-browser")
+            .unwrap();
+        assert_eq!(browser[c + 1], "firefox");
+        // Options stay before the `--` that ends them.
+        assert!(c < browser.iter().position(|a| a == "--").unwrap());
+
+        let file = YtDlp::resolve_args(
+            &id,
+            Quality::High,
+            None,
+            &Cookies::File("/tmp/c.txt".into()),
+        );
+        let c = file.iter().position(|a| a == "--cookies").unwrap();
+        assert_eq!(file[c + 1], "/tmp/c.txt");
+    }
+
+    #[test]
+    fn validates_cookie_settings() {
+        assert!(Cookies::None.validate().is_ok());
+        assert!(Cookies::Browser("firefox".into()).validate().is_ok());
+        assert!(
+            Cookies::Browser("chrome:Profile 1".into())
+                .validate()
+                .is_ok()
+        );
+        assert!(Cookies::Browser("netscape".into()).validate().is_err());
+        assert!(Cookies::Browser("firefox:".into()).validate().is_err());
+        assert!(
+            Cookies::File("/definitely/not/here.txt".into())
+                .validate()
+                .is_err()
+        );
+        let json = serde_json::to_string(&Cookies::Browser("firefox".into())).unwrap();
+        assert_eq!(json, r#"{"mode":"browser","value":"firefox"}"#);
+        assert_eq!(
+            serde_json::from_str::<Cookies>(r#"{"mode":"none"}"#).unwrap(),
+            Cookies::None
+        );
+    }
+
+    #[test]
+    fn cookie_changes_reach_clones() {
+        let dir = std::env::temp_dir().join(format!("volna-cookies-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("yt-dlp");
+        std::fs::write(&bin, "").unwrap();
+        let a = YtDlp::locate(Some(&bin)).unwrap();
+        let b = a.clone();
+        a.set_cookies(Cookies::Browser("firefox".into())).unwrap();
+        assert_eq!(b.cookies(), Cookies::Browser("firefox".into()));
+        assert!(a.set_cookies(Cookies::Browser("nope".into())).is_err());
+        assert_eq!(b.cookies(), Cookies::Browser("firefox".into()));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

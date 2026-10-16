@@ -1,0 +1,15 @@
+Volna UI
+Copyright 2026 Khudoberdi Abdujalilov
+
+This directory is a modified fork of Monochrome
+(https://github.com/monochrome-music/monochrome), licensed under the
+Apache License, Version 2.0 (see the "license" file in this directory).
+Forked from upstream commit a3c86df0436a3eedc341ab5163fc5ee6b1688b5d.
+
+Modifications by the Volna project include, among others: removal of
+accounts/cloud sync, analytics, error reporting, listening parties,
+downloads, the Apple Music provider and podcasts; adaptation as a Tauri
+desktop frontend; and a new music source (YouTube Music through the
+Rust backend instead of TIDAL-compatible web APIs).
+
+Original Monochrome code remains copyright its respective contributors.

@@ -153,6 +153,12 @@ impl ApiEmu {
         let _ = self.stream_base.set(base);
     }
 
+    /// A handle on the same YouTube Music client (shared session and HTTP
+    /// client, so [`Self::refresh_http_client`] reaches it too).
+    pub fn ytm(&self) -> YtmClient {
+        self.ytm.clone()
+    }
+
     /// Call after `NetManager::apply`: InnerTube must use the new route.
     pub async fn refresh_http_client(&self) {
         self.ytm.set_http_client(self.net.client()).await;

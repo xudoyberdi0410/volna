@@ -8,6 +8,7 @@ mod network;
 mod protocol;
 mod settings;
 mod state;
+mod wave;
 
 use tauri::Manager;
 use volna_streams::LoopbackServer;
@@ -51,8 +52,10 @@ pub fn run() {
             let network = network::NetworkState::new(settings::SettingsStore::new(
                 &app.path().app_config_dir()?,
             ));
+            let wave = wave::WaveState::open(&app.path().app_data_dir()?, state.api.ytm())?;
             app.manage(state);
             app.manage(network);
+            app.manage(wave);
             // Restoring may start xray; the window does not wait for it.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -74,6 +77,18 @@ pub fn run() {
             network::net_validate,
             network::net_health,
             network::net_xray_logs,
+            wave::wave_status,
+            wave::wave_set_settings,
+            wave::wave_activities,
+            wave::wave_artist_search,
+            wave::wave_related_artists,
+            wave::wave_cold_start,
+            wave::wave_start,
+            wave::wave_next,
+            wave::wave_requeue,
+            wave::wave_stop,
+            wave::wave_event,
+            wave::wave_sync_likes,
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let state = ctx

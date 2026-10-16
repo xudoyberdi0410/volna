@@ -64,3 +64,20 @@ pub async fn stream_prefetch(
 pub fn stream_base(state: State<'_, AppState>) -> Option<String> {
     state.stream_base.clone()
 }
+
+/// Why the last attempt to play `videoId` failed, or `None` if it did not.
+/// `<audio>` only sees an HTTP error; the UI asks here to explain it.
+#[tauri::command]
+pub fn stream_failure(
+    state: State<'_, AppState>,
+    video_id: String,
+) -> CmdResult<Option<volna_streams::Failure>> {
+    let Some(streams) = state.streams.as_ref() else {
+        return Ok(Some(volna_streams::Failure {
+            kind: volna_streams::FailureKind::NoYtDlp,
+            message: "yt-dlp not found".to_owned(),
+        }));
+    };
+    let id = VideoId::parse(&video_id).map_err(|e| e.to_string())?;
+    Ok(streams.last_failure(&id))
+}

@@ -131,6 +131,52 @@ pub async fn net_health(app: State<'_, AppState>) -> CmdResult<HealthReport> {
     Ok(app.net.health_check().await)
 }
 
+/// A popular, region-free music video used to test audio resolution.
+/// (Not "Never Gonna Give You Up": YouTube lets that one through even from
+/// IPs that are bot-checked for everything else.)
+const AUDIO_PROBE_ID: &str = "kJQP7kiw5Fk";
+
+#[derive(Debug, Serialize)]
+pub struct AudioCheck {
+    ok: bool,
+    /// Set when `ok` is false.
+    kind: Option<volna_streams::FailureKind>,
+    message: Option<String>,
+    latency_ms: u64,
+}
+
+/// Can audio be resolved through the current network? The catalogue may
+/// work while yt-dlp is refused with a bot check, so «Проверить» asks both.
+#[tauri::command]
+pub async fn net_audio_check(app: State<'_, AppState>) -> CmdResult<AudioCheck> {
+    let Some(streams) = &app.streams else {
+        return Ok(AudioCheck {
+            ok: false,
+            kind: Some(volna_streams::FailureKind::NoYtDlp),
+            message: Some("yt-dlp not found".to_owned()),
+            latency_ms: 0,
+        });
+    };
+    let id = volna_streams::VideoId::parse(AUDIO_PROBE_ID).map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    let result = streams.resolve(&id, volna_streams::Quality::High).await;
+    let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    Ok(match result {
+        Ok(_) => AudioCheck {
+            ok: true,
+            kind: None,
+            message: None,
+            latency_ms,
+        },
+        Err(e) => AudioCheck {
+            ok: false,
+            kind: Some(e.kind()),
+            message: Some(e.to_string()),
+            latency_ms,
+        },
+    })
+}
+
 #[tauri::command]
 pub fn net_xray_logs(app: State<'_, AppState>) -> Vec<String> {
     app.net.xray_logs()

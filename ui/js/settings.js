@@ -4,7 +4,6 @@ import {
     lastFMStorage,
     nowPlayingSettings,
     fullscreenCoverClickSettings,
-    lyricsSettings,
     backgroundSettings,
     disableBlurEffectsSettings,
     dynamicColorSettings,
@@ -15,13 +14,9 @@ import {
     crossfadeSettings,
     donationPromptSettings,
     replayGainSettings,
-    downloadQualitySettings,
-    losslessContainerSettings,
-    coverArtSizeSettings,
     qualityBadgeSettings,
     trackDateSettings,
     visualizerSettings,
-    playlistSettings,
     equalizerSettings,
     listenBrainzSettings,
     malojaSettings,
@@ -38,7 +33,6 @@ import {
     musicProviderSettings,
     deezerFallbackSettings,
     gaplessPlaybackSettings,
-    analyticsSettings,
     modalSettings,
     preferDolbyAtmosSettings,
     nativeOsAtmosSettings,
@@ -55,10 +49,6 @@ import { calculateBiquadResponse, interpolate, getNormalizationOffset, runAutoEq
 import { parseRawData, TARGETS, SPEAKER_TARGETS } from './autoeq-data.js';
 import { fetchAutoEqIndex, fetchHeadphoneData, searchHeadphones, POPULAR_HEADPHONES } from './autoeq-importer.js';
 import { db } from './db.js';
-import { authManager } from './accounts/auth.js';
-import { syncManager } from './accounts/pocketbase.js';
-import { containerFormats, customFormats } from './ffmpegFormats.ts';
-import { BulkDownloadMethod, modernSettings } from './ModernSettings.js';
 import { canBrowserStreamAtmosQuality } from './platform-detection.js';
 
 async function getButterchurnPresets(...args) {
@@ -81,9 +71,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         settingsTab.classList.add('active');
         document.getElementById(`settings-tab-${savedTab}`)?.classList.add('active');
     }
-
-    // Initialize account system UI & Settings
-    authManager.updateUI?.(authManager.user ?? null);
 
     // ========================================
     // Dev Mode
@@ -127,81 +114,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         dismissDisruptionBtn.addEventListener('click', () => {
             serverDisruptionSettings.dismiss();
             if (disruptionBanner) disruptionBanner.style.display = 'none';
-        });
-    }
-
-    // Email Auth UI Logic
-    const toggleEmailBtn = document.getElementById('toggle-email-auth-btn');
-    const authModalCloseBtn = document.getElementById('email-auth-modal-close');
-    const authModal = document.getElementById('email-auth-modal');
-    const emailInput = document.getElementById('auth-email');
-    const passwordInput = document.getElementById('auth-password');
-    const signInBtn = document.getElementById('email-signin-btn');
-    const signUpBtn = document.getElementById('email-signup-btn');
-    const resetPasswordBtn = document.getElementById('reset-password-btn');
-
-    if (toggleEmailBtn && authModal) {
-        toggleEmailBtn.addEventListener('click', () => {
-            authModal.classList.add('active');
-        });
-    }
-
-    if (authModal) {
-        const closeAuthModal = () => authModal.classList.remove('active');
-        authModalCloseBtn?.addEventListener('click', closeAuthModal);
-        authModal.querySelector('.modal-overlay')?.addEventListener('click', closeAuthModal);
-    }
-
-    if (signInBtn) {
-        signInBtn.addEventListener('click', async () => {
-            const email = emailInput.value;
-            const password = passwordInput.value;
-            if (!email || !password) {
-                alert('Please enter both email and password.');
-                return;
-            }
-            try {
-                await authManager.signInWithEmail(email, password);
-                authModal.classList.remove('active');
-                emailInput.value = '';
-                passwordInput.value = '';
-            } catch {
-                // Error handled in authManager
-            }
-        });
-    }
-
-    if (signUpBtn) {
-        signUpBtn.addEventListener('click', async () => {
-            const email = emailInput.value;
-            const password = passwordInput.value;
-            if (!email || !password) {
-                alert('Please enter both email and password.');
-                return;
-            }
-            try {
-                await authManager.signUpWithEmail(email, password);
-                authModal.classList.remove('active');
-                emailInput.value = '';
-                passwordInput.value = '';
-            } catch {
-                // Error handled in authManager
-            }
-        });
-    }
-
-    if (resetPasswordBtn) {
-        resetPasswordBtn.addEventListener('click', async () => {
-            const email = emailInput.value;
-            if (!email) {
-                alert('Please enter your email address to reset your password.');
-                return;
-            }
-            try {
-                await authManager.sendPasswordReset(email);
-            } catch {
-                /* ignore */
-            }
         });
     }
 
@@ -903,8 +815,8 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             if (atmosWarning) atmosWarning.style.display = showWarning ? '' : 'none';
             if (showWarning && atmosWarningText) {
                 atmosWarningText.textContent = supported
-                    ? 'AC-4 streaming support is experimental and may still fail in this browser. AC-4 downloads remain available.'
-                    : `This browser does not report ${isAc4 ? 'AC-4' : 'E-AC-3'} playback support, so this quality cannot be streamed here. You can still use it for downloads.`;
+                    ? 'AC-4 streaming support is experimental and may still fail in this browser.'
+                    : `This browser does not report ${isAc4 ? 'AC-4' : 'E-AC-3'} playback support, so this quality cannot be streamed here.`;
             }
         };
         updateStreamingQualityDetails();
@@ -940,143 +852,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    // Download Quality setting
-    const downloadQualitySetting = document.getElementById('download-quality-setting');
-    if (downloadQualitySetting) {
-        // Assign categories to the static (native) options already in the HTML
-        const staticCategories = {
-            DOLBY_ATMOS_EAC3_HIGH: 'Immersive',
-            DOLBY_ATMOS_EAC3_LOW: 'Immersive',
-            DOLBY_ATMOS_AC4_HIGH: 'Immersive',
-            DOLBY_ATMOS_AC4_LOW: 'Immersive',
-            HI_RES_LOSSLESS: 'Lossless',
-            LOSSLESS: 'Lossless',
-            HIGH: 'AAC',
-            LOW: 'AAC',
-        };
-
-        // Collect static options first (preserving their original order)
-        const allOptions = Array.from(downloadQualitySetting.options).map((opt, index) => ({
-            value: opt.value,
-            text: opt.textContent.trim(),
-            category: staticCategories[opt.value] || 'Other',
-            sources: opt.dataset.sources || '',
-            order: index,
-        }));
-
-        // Append custom (ffmpeg-transcoded) format options
-        for (const [key, fmt] of Object.entries(customFormats)) {
-            allOptions.push({
-                value: key,
-                text: fmt.displayName,
-                category: fmt.category,
-                sources: '',
-                order: allOptions.length,
-            });
-        }
-
-        // Sort by category order first, then by bitrate descending within each category
-        // so higher-quality options always appear before lower-quality ones.
-        // Options without an explicit kbps value (lossless) use Infinity so they
-        // sort to the top; ties preserve the authored option order.
-        const getBitrate = (text) => {
-            const m = text.match(/(\d+)\s*kbps/i);
-            return m ? parseInt(m[1], 10) : Infinity;
-        };
-        const categoryOrder = ['Immersive', 'Lossless', 'AAC', 'MP3', 'OGG', 'Opus'];
-        allOptions.sort((a, b) => {
-            if (a.category === b.category && (a.category === 'Immersive' || a.category === 'Lossless')) return 0;
-            const ai = categoryOrder.indexOf(a.category);
-            const bi = categoryOrder.indexOf(b.category);
-            const categoryDiff = (ai === -1 ? categoryOrder.length : ai) - (bi === -1 ? categoryOrder.length : bi);
-            if (categoryDiff !== 0) return categoryDiff;
-            const bitrateA = getBitrate(a.text);
-            const bitrateB = getBitrate(b.text);
-            if (bitrateA !== bitrateB) return bitrateB - bitrateA;
-            return a.order - b.order;
-        });
-
-        // Rebuild the select with optgroup elements per category
-        downloadQualitySetting.innerHTML = '';
-        let currentGroup = null;
-        let currentCategory = null;
-        for (const opt of allOptions) {
-            if (opt.category !== currentCategory) {
-                currentCategory = opt.category;
-                currentGroup = document.createElement('optgroup');
-                currentGroup.label = opt.category;
-                downloadQualitySetting.appendChild(currentGroup);
-            }
-            const option = document.createElement('option');
-            option.value = opt.value;
-            option.textContent = opt.text;
-            if (opt.sources) option.dataset.sources = opt.sources;
-            currentGroup.appendChild(option);
-        }
-
-        downloadQualitySetting.value = downloadQualitySettings.getQuality();
-
-        const sourcesDescription = document.getElementById('download-quality-sources');
-        const updateDownloadQualityDetails = () => {
-            const sources = downloadQualitySetting.selectedOptions?.[0]?.dataset.sources;
-            if (sourcesDescription) {
-                sourcesDescription.textContent = sources
-                    ? `Supported sources: ${sources}`
-                    : 'Quality for track downloads';
-            }
-        };
-        updateDownloadQualityDetails();
-
-        downloadQualitySetting.addEventListener('change', (e) => {
-            downloadQualitySettings.setQuality(e.target.value);
-            updateLosslessContainerVisibility();
-            updateDownloadQualityDetails();
-        });
-    }
-
-    const losslessContainerSetting = document.getElementById('lossless-container-setting');
-    const losslessContainerSettingItem = losslessContainerSetting?.closest('.setting-item');
-
-    /** Shows/hides the Lossless Container setting based on the selected quality */
-    function updateLosslessContainerVisibility() {
-        if (!losslessContainerSettingItem) return;
-        const quality = downloadQualitySettings.getQuality();
-        const isLossless = quality === 'LOSSLESS' || quality === 'HI_RES_LOSSLESS';
-        losslessContainerSettingItem.style.display = isLossless ? '' : 'none';
-    }
-
-    if (losslessContainerSetting) {
-        const noChangeOption = losslessContainerSetting.querySelector('option:last-child');
-        noChangeOption.remove();
-
-        for (const [internalName, { displayName }] of Object.entries(containerFormats)) {
-            const option = document.createElement('option');
-            option.value = internalName;
-            option.textContent = displayName;
-            losslessContainerSetting.appendChild(option);
-        }
-
-        losslessContainerSetting.append(noChangeOption);
-
-        losslessContainerSetting.value = losslessContainerSettings.getContainer();
-
-        losslessContainerSetting.addEventListener('change', (e) => {
-            losslessContainerSettings.setContainer(e.target.value);
-        });
-    }
-
-    updateLosslessContainerVisibility();
-
-    // Cover Art Size setting
-    const coverArtSizeSetting = document.getElementById('cover-art-size-setting');
-    if (coverArtSizeSetting) {
-        coverArtSizeSetting.value = coverArtSizeSettings.getSize();
-
-        coverArtSizeSetting.addEventListener('change', (e) => {
-            coverArtSizeSettings.setSize(e.target.value);
-        });
-    }
-
     // Quality Badge Settings
     const showQualityBadgesToggle = document.getElementById('show-quality-badges-toggle');
     if (showQualityBadgesToggle) {
@@ -1094,160 +869,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         useAlbumReleaseYearToggle.checked = trackDateSettings.useAlbumYear();
         useAlbumReleaseYearToggle.addEventListener('change', (e) => {
             trackDateSettings.setUseAlbumYear(e.target.checked);
-        });
-    }
-
-    const forceZipBlobToggle = document.getElementById('force-zip-blob-toggle');
-    const forceZipBlobSettingItem = forceZipBlobToggle?.closest('.setting-item');
-    const hasFileSystemAccess =
-        'showSaveFilePicker' in window &&
-        typeof FileSystemFileHandle !== 'undefined' &&
-        'createWritable' in FileSystemFileHandle.prototype;
-    const hasFolderPicker = 'showDirectoryPicker' in window;
-
-    const rememberFolderSetting = document.getElementById('remember-folder-setting');
-    const rememberFolderToggle = document.getElementById('remember-folder-toggle');
-    const resetSavedFolderSetting = document.getElementById('reset-saved-folder-setting');
-    const resetSavedFolderBtn = document.getElementById('reset-saved-folder-btn');
-    const singleToFolderSetting = document.getElementById('single-to-folder-setting');
-    const singleToFolderToggle = document.getElementById('single-to-folder-toggle');
-
-    /** Shows/hides the Force ZIP as Blob setting based on method and browser support */
-    function updateForceZipBlobVisibility() {
-        if (!forceZipBlobSettingItem) return;
-        const method = modernSettings.bulkDownloadMethod;
-        // Only relevant when zip method is selected and the browser supports streaming
-        const visible = method === BulkDownloadMethod.Zip && hasFileSystemAccess;
-        forceZipBlobSettingItem.style.display = visible ? '' : 'none';
-    }
-
-    /** Shows/hides folder-picker-specific and folder-method settings */
-    async function updateFolderMethodVisibility() {
-        const method = modernSettings.bulkDownloadMethod;
-        const isFolderMethod = method === BulkDownloadMethod.Folder;
-        const isFolderOrLocal = isFolderMethod || method === BulkDownloadMethod.LocalMedia;
-
-        if (rememberFolderSetting) {
-            rememberFolderSetting.style.display = isFolderMethod && hasFolderPicker ? '' : 'none';
-        }
-
-        // Reset button: only visible when folder method + remember enabled + valid saved handle exists
-        if (resetSavedFolderSetting) {
-            let showReset = false;
-            if (isFolderMethod && hasFolderPicker && modernSettings.rememberBulkDownloadFolder) {
-                const savedHandle = modernSettings.bulkDownloadFolder;
-                showReset = !!savedHandle;
-            }
-            resetSavedFolderSetting.style.display = showReset ? '' : 'none';
-        }
-
-        if (singleToFolderSetting) {
-            singleToFolderSetting.style.display = isFolderOrLocal ? '' : 'none';
-        }
-    }
-
-    const bulkDownloadMethod = document.getElementById('bulk-download-method');
-    if (bulkDownloadMethod) {
-        // Remove the folder picker option if the browser doesn't support it
-        if (!hasFolderPicker) {
-            const folderOption = bulkDownloadMethod.querySelector('option[value="folder"]');
-            if (folderOption) {
-                folderOption.remove();
-            }
-            const localOption = bulkDownloadMethod.querySelector('option[value="local"]');
-            if (localOption) {
-                localOption.remove();
-            }
-            // If the stored method is 'folder' or 'local' without native support, fall back to 'zip'
-            const currentMethod = modernSettings.bulkDownloadMethod;
-            if (currentMethod === BulkDownloadMethod.Folder || currentMethod === BulkDownloadMethod.LocalMedia) {
-                modernSettings.bulkDownloadMethod = BulkDownloadMethod.Zip;
-            }
-        }
-        bulkDownloadMethod.value = modernSettings.bulkDownloadMethod;
-        bulkDownloadMethod.addEventListener('change', async (e) => {
-            const previousMethod = modernSettings.bulkDownloadMethod;
-            const newMethod = e.target.value;
-            modernSettings.bulkDownloadMethod = newMethod;
-
-            // When switching to 'local', prompt to select the local media folder if not yet configured
-            if (newMethod === BulkDownloadMethod.LocalMedia) {
-                const existingHandle = await db.getSetting('local_folder_handle');
-                if (!existingHandle) {
-                    let picked = false;
-                    try {
-                        if (hasFolderPicker) {
-                            const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-                            if (handle) {
-                                picked = true;
-                                await db.saveSetting('local_folder_handle', handle);
-                            }
-                        }
-                    } catch {
-                        // User cancelled the picker
-                    }
-
-                    if (!picked) {
-                        // Revert to the previous method since no folder was selected.
-                        // Guard against the edge case where the previousMethod option
-                        // no longer exists in the dropdown (e.g. removed due to no API support).
-                        if (bulkDownloadMethod.querySelector(`option[value="${previousMethod}"]`)) {
-                            modernSettings.bulkDownloadMethod = previousMethod;
-                            bulkDownloadMethod.value = previousMethod;
-                        } else {
-                            // Fall back to zip which is always present
-                            modernSettings.bulkDownloadMethod = 'zip';
-                            bulkDownloadMethod.value = 'zip';
-                        }
-                    }
-                }
-            }
-            await modernSettings.waitPending();
-
-            updateForceZipBlobVisibility();
-            await updateFolderMethodVisibility();
-        });
-    }
-
-    if (rememberFolderToggle) {
-        rememberFolderToggle.checked = modernSettings.rememberBulkDownloadFolder;
-        rememberFolderToggle.addEventListener('change', async (e) => {
-            modernSettings.rememberBulkDownloadFolder = !!e.target.checked;
-            await modernSettings.waitPending();
-            await updateFolderMethodVisibility();
-        });
-    }
-
-    if (resetSavedFolderBtn) {
-        resetSavedFolderBtn.addEventListener('click', async () => {
-            modernSettings.bulkDownloadFolder = null;
-            await modernSettings.waitPending();
-            await updateFolderMethodVisibility();
-        });
-    }
-
-    if (singleToFolderToggle) {
-        singleToFolderToggle.checked = modernSettings.downloadSinglesToFolder;
-        singleToFolderToggle.addEventListener('change', (e) => {
-            modernSettings.downloadSinglesToFolder = !!e.target.checked;
-        });
-    }
-
-    if (forceZipBlobToggle) {
-        forceZipBlobToggle.checked = modernSettings.forceZipBlob;
-        forceZipBlobToggle.addEventListener('change', (e) => {
-            modernSettings.forceZipBlob = !!e.target.checked;
-        });
-    }
-
-    updateForceZipBlobVisibility();
-    await updateFolderMethodVisibility();
-
-    const includeCoverToggle = document.getElementById('include-cover-toggle');
-    if (includeCoverToggle) {
-        includeCoverToggle.checked = playlistSettings.shouldIncludeCover();
-        includeCoverToggle.addEventListener('change', (e) => {
-            playlistSettings.setIncludeCover(e.target.checked);
         });
     }
 
@@ -5847,24 +5468,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    // Write multiple artists toggle
-    const writeArtistsSeparatelyToggle = document.getElementById('write-artists-separately-toggle');
-    if (writeArtistsSeparatelyToggle) {
-        writeArtistsSeparatelyToggle.checked = modernSettings.writeArtistsSeparately;
-        writeArtistsSeparatelyToggle.addEventListener('change', (e) => {
-            modernSettings.writeArtistsSeparately = e.target.checked;
-        });
-    }
-
-    // Download Lyrics Toggle
-    const downloadLyricsToggle = document.getElementById('download-lyrics-toggle');
-    if (downloadLyricsToggle) {
-        downloadLyricsToggle.checked = lyricsSettings.shouldDownloadLyrics();
-        downloadLyricsToggle.addEventListener('change', (e) => {
-            lyricsSettings.setDownloadLyrics(e.target.checked);
-        });
-    }
-
     // Romaji Lyrics Toggle
     const romajiLyricsToggle = document.getElementById('romaji-lyrics-toggle');
     if (romajiLyricsToggle) {
@@ -6237,23 +5840,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    // Watch for downloads tab becoming active and update setting visibility
-    const downloadsTabContent = document.getElementById('settings-tab-downloads');
-    if (downloadsTabContent) {
-        const observer = new MutationObserver(async (mutations) => {
-            for (const mutation of mutations) {
-                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-                    if (downloadsTabContent.classList.contains('active')) {
-                        console.log('[Settings] Downloads tab became active, updating setting visibility');
-                        updateForceZipBlobVisibility();
-                        await updateFolderMethodVisibility();
-                    }
-                }
-            }
-        });
-        observer.observe(downloadsTabContent, { attributes: true });
-    }
-
     // Visualizer Mode Select
     const visualizerModeSelect = document.getElementById('visualizer-mode-select');
     if (visualizerModeSelect) {
@@ -6422,15 +6008,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    const sidebarShowPartyToggle = document.getElementById('sidebar-show-party-toggle');
-    if (sidebarShowPartyToggle) {
-        sidebarShowPartyToggle.checked = sidebarSectionSettings.shouldShowParty();
-        sidebarShowPartyToggle.addEventListener('change', (e) => {
-            sidebarSectionSettings.setShowParty(e.target.checked);
-            sidebarSectionSettings.applySidebarVisibility();
-        });
-    }
-
     const sidebarShowGithubToggle = document.getElementById('sidebar-show-githubbtn-toggle');
     if (sidebarShowGithubToggle) {
         sidebarShowGithubToggle.checked = sidebarSectionSettings.shouldShowGithub();
@@ -6552,81 +6129,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         sidebarSettingsGroup.addEventListener('drop', (e) => e.preventDefault());
     }
 
-    // Filename template setting
-    const filenameTemplate = document.getElementById('filename-template');
-    if (filenameTemplate) {
-        filenameTemplate.value = modernSettings.filenameTemplate;
-        filenameTemplate.addEventListener('change', (e) => {
-            modernSettings.filenameTemplate = String(e.target.value);
-        });
-    }
-
-    // ZIP folder template
-    const zipFolderTemplate = document.getElementById('zip-folder-template');
-    if (zipFolderTemplate) {
-        zipFolderTemplate.value = modernSettings.folderTemplate;
-        zipFolderTemplate.addEventListener('change', (e) => {
-            modernSettings.folderTemplate = String(e.target.value);
-        });
-    }
-
-    // Playlist file generation settings
-    const generateM3UToggle = document.getElementById('generate-m3u-toggle');
-    if (generateM3UToggle) {
-        generateM3UToggle.checked = playlistSettings.shouldGenerateM3U();
-        generateM3UToggle.addEventListener('change', (e) => {
-            playlistSettings.setGenerateM3U(e.target.checked);
-        });
-    }
-
-    const generateM3U8Toggle = document.getElementById('generate-m3u8-toggle');
-    if (generateM3U8Toggle) {
-        generateM3U8Toggle.checked = playlistSettings.shouldGenerateM3U8();
-        generateM3U8Toggle.addEventListener('change', (e) => {
-            playlistSettings.setGenerateM3U8(e.target.checked);
-        });
-    }
-
-    const generateCUEtoggle = document.getElementById('generate-cue-toggle');
-    if (generateCUEtoggle) {
-        generateCUEtoggle.checked = playlistSettings.shouldGenerateCUE();
-        generateCUEtoggle.addEventListener('change', (e) => {
-            playlistSettings.setGenerateCUE(e.target.checked);
-        });
-    }
-
-    const generateNFOtoggle = document.getElementById('generate-nfo-toggle');
-    if (generateNFOtoggle) {
-        generateNFOtoggle.checked = playlistSettings.shouldGenerateNFO();
-        generateNFOtoggle.addEventListener('change', (e) => {
-            playlistSettings.setGenerateNFO(e.target.checked);
-        });
-    }
-
-    const generateJSONtoggle = document.getElementById('generate-json-toggle');
-    if (generateJSONtoggle) {
-        generateJSONtoggle.checked = playlistSettings.shouldGenerateJSON();
-        generateJSONtoggle.addEventListener('change', (e) => {
-            playlistSettings.setGenerateJSON(e.target.checked);
-        });
-    }
-
-    const relativePathsToggle = document.getElementById('relative-paths-toggle');
-    if (relativePathsToggle) {
-        relativePathsToggle.checked = playlistSettings.shouldUseRelativePaths();
-        relativePathsToggle.addEventListener('change', (e) => {
-            playlistSettings.setUseRelativePaths(e.target.checked);
-        });
-    }
-
-    const separateDiscsZipToggle = document.getElementById('separate-discs-zip-toggle');
-    if (separateDiscsZipToggle) {
-        separateDiscsZipToggle.checked = playlistSettings.shouldSeparateDiscsInZip();
-        separateDiscsZipToggle.addEventListener('change', (e) => {
-            playlistSettings.setSeparateDiscsInZip(e.target.checked);
-        });
-    }
-
     // API settings
     document.getElementById('refresh-speed-test-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('refresh-speed-test-btn');
@@ -6722,19 +6224,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         }
     });
 
-    document.getElementById('auth-clear-cloud-btn')?.addEventListener('click', async () => {
-        if (confirm('Are you sure you want to delete ALL your data from the cloud? This cannot be undone.')) {
-            try {
-                await syncManager.clearCloudData();
-                alert('Cloud data cleared successfully.');
-                await authManager.signOut();
-            } catch (error) {
-                console.error('Failed to clear cloud data:', error);
-                alert('Failed to clear cloud data: ' + error.message);
-            }
-        }
-    });
-
     // Backup & Restore
     document.getElementById('export-library-btn')?.addEventListener('click', async () => {
         const data = await db.exportData();
@@ -6826,88 +6315,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         reader.readAsText(file);
     });
 
-    const customDbBtn = document.getElementById('custom-db-btn');
-    const customDbModal = document.getElementById('custom-db-modal');
-    const customPbUrlInput = document.getElementById('custom-pb-url');
-    const customAppwriteEndpointInput = document.getElementById('custom-appwrite-endpoint');
-    const customDbSaveBtn = document.getElementById('custom-db-save');
-    const customDbResetBtn = document.getElementById('custom-db-reset');
-    const customDbCancelBtn = document.getElementById('custom-db-cancel');
-
-    if (customDbBtn && customDbModal) {
-        const authFromEnv = !!(window.__AUTH_URL__ || window.__APPWRITE_ENDPOINT__);
-        const pbFromEnv = !!window.__POCKETBASE_URL__;
-
-        // Hide entire setting if both are server-configured
-        if (authFromEnv && pbFromEnv) {
-            const settingItem = customDbBtn.closest('.setting-item');
-            if (settingItem) settingItem.style.display = 'none';
-        }
-
-        // Hide individual fields in the modal
-        if (pbFromEnv && customPbUrlInput) customPbUrlInput.closest('div[style]').style.display = 'none';
-        if (authFromEnv && customAppwriteEndpointInput)
-            customAppwriteEndpointInput.closest('div[style]').style.display = 'none';
-
-        customDbBtn.addEventListener('click', () => {
-            const pbUrl = localStorage.getItem('monochrome-pocketbase-url') || '';
-            const authEndpoint =
-                localStorage.getItem('monochrome-auth-url') ||
-                localStorage.getItem('monochrome-appwrite-endpoint') ||
-                '';
-
-            if (!pbFromEnv && customPbUrlInput) customPbUrlInput.value = pbUrl;
-            if (!authFromEnv && customAppwriteEndpointInput) customAppwriteEndpointInput.value = authEndpoint;
-
-            customDbModal.classList.add('active');
-        });
-
-        const closeCustomDbModal = () => {
-            customDbModal.classList.remove('active');
-        };
-
-        customDbCancelBtn.addEventListener('click', closeCustomDbModal);
-        customDbModal.querySelector('.modal-overlay').addEventListener('click', closeCustomDbModal);
-
-        customDbSaveBtn.addEventListener('click', () => {
-            if (!pbFromEnv && customPbUrlInput) {
-                const pbUrl = customPbUrlInput.value.trim();
-                if (pbUrl) {
-                    localStorage.setItem('monochrome-pocketbase-url', pbUrl);
-                } else {
-                    localStorage.removeItem('monochrome-pocketbase-url');
-                }
-            }
-
-            if (!authFromEnv) {
-                const endpoint = customAppwriteEndpointInput?.value.trim();
-
-                if (endpoint) {
-                    localStorage.setItem('monochrome-auth-url', endpoint);
-                } else {
-                    localStorage.removeItem('monochrome-auth-url');
-                }
-                // cleanup legacy appwrite keys
-                localStorage.removeItem('monochrome-appwrite-endpoint');
-                localStorage.removeItem('monochrome-appwrite-project');
-            }
-
-            alert('Settings saved. Reloading...');
-            window.location.reload();
-        });
-
-        customDbResetBtn.addEventListener('click', () => {
-            if (confirm('Reset custom database settings to default?')) {
-                localStorage.removeItem('monochrome-pocketbase-url');
-                localStorage.removeItem('monochrome-auth-url');
-                localStorage.removeItem('monochrome-appwrite-endpoint');
-                localStorage.removeItem('monochrome-appwrite-project');
-                alert('Settings reset. Reloading...');
-                window.location.reload();
-            }
-        });
-    }
-
     // PWA Auto-Update Toggle
     const pwaAutoUpdateToggle = document.getElementById('pwa-auto-update-toggle');
     if (pwaAutoUpdateToggle) {
@@ -6917,22 +6324,13 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    // Analytics Toggle
-    const analyticsToggle = document.getElementById('analytics-toggle');
-    if (analyticsToggle) {
-        analyticsToggle.checked = analyticsSettings.isEnabled();
-        analyticsToggle.addEventListener('change', (e) => {
-            analyticsSettings.setEnabled(e.target.checked);
-        });
-    }
-
     // Reset Local Data Button
     const resetLocalDataBtn = document.getElementById('reset-local-data-btn');
     if (resetLocalDataBtn) {
         resetLocalDataBtn.addEventListener('click', async () => {
             if (
                 confirm(
-                    'WARNING: This will clear all local data including settings, cache, and library.\n\nAre you sure you want to continue?\n\n(Cloud-synced data will not be affected)'
+                    'WARNING: This will clear all local data including settings, cache, and library.\n\nAre you sure you want to continue?'
                 )
             ) {
                 try {

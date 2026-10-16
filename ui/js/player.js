@@ -1688,7 +1688,7 @@ export class Player {
 
             console.error(`Could not play track: ${trackTitle}`, error);
             if (error?.code === 'UNSUPPORTED_PLAYBACK_CODEC' || error?.code === 'STRICT_QUALITY_UNAVAILABLE') {
-                import('./downloads.js')
+                import('./notifications.js')
                     .then(({ showNotification }) => showNotification(error.message))
                     .catch(() => {});
             }

@@ -1,21 +1,8 @@
-import path from 'path';
 import { defineConfig } from 'vite';
-import { VitePWA } from 'vite-plugin-pwa';
-import authGatePlugin from './vite-plugin-auth-gate.js';
 import blobAssetPlugin from './vite-plugin-blob.js';
 import svgUse from './vite-plugin-svg-use.js';
-import uploadPlugin from './vite-plugin-upload.js';
 import { playwright } from '@vitest/browser-playwright';
 import { execSync } from 'child_process';
-
-function proxyAudioPlugin() {
-    return {
-        name: 'proxy-audio-dev',
-        configureServer(server) {
-            // No longer needed: local proxy-audio middleware replaced by remote proxy
-        },
-    };
-}
 
 function getGitCommitHash() {
     try {
@@ -25,9 +12,11 @@ function getGitCommitHash() {
     }
 }
 
-export default defineConfig(({ mode }) => {
+// Set by `tauri dev` when running on a device/emulator that needs a LAN host.
+const tauriDevHost = process.env.TAURI_DEV_HOST;
+
+export default defineConfig(() => {
     const commitHash = getGitCommitHash();
-    const isDev = mode === 'development';
 
     return {
         test: {
@@ -44,6 +33,9 @@ export default defineConfig(({ mode }) => {
             },
         },
         base: './',
+        // Keep Rust errors visible in the `tauri dev` terminal.
+        clearScreen: false,
+        envPrefix: ['VITE_', 'TAURI_ENV_'],
         define: {
             __COMMIT_HASH__: JSON.stringify(commitHash),
             __VITEST__: !!process.env.VITEST,
@@ -59,110 +51,36 @@ export default defineConfig(({ mode }) => {
                 '!': '/node_modules',
 
                 events: '/node_modules/events/events.js',
-                pocketbase: '/node_modules/pocketbase/dist/pocketbase.es.js',
-                stream: path.resolve(__dirname, 'stream-stub.js'), // Stub for stream module
             },
         },
         optimizeDeps: {
-            exclude: ['pocketbase', '@ffmpeg/ffmpeg', '@ffmpeg/util'],
-            include: ['workbox-window', '@sentry/browser', '@capacitor/haptics', 'fuse.js'],
+            include: ['@capacitor/haptics', 'fuse.js'],
         },
         server: {
+            // Tauri expects a fixed port (see src-tauri/tauri.conf.json devUrl).
+            port: 5173,
+            strictPort: true,
+            host: tauriDevHost || false,
+            hmr: tauriDevHost ? { protocol: 'ws', host: tauriDevHost, port: 5174 } : undefined,
             fs: {
                 allow: ['.', 'node_modules'],
-                // host: true,
-                // allowedHosts: ['<your_tailscale_hostname>'], // e.g. pi5.tailf5f622.ts.net
+            },
+            watch: {
+                ignored: ['**/src-tauri/**'],
             },
         },
-        // preview: {
-        //     host: true,
-        //     allowedHosts: ['<your_tailscale_hostname>'], // e.g. pi5.tailf5f622.ts.net
-        // },
         build: {
             outDir: 'dist',
             emptyOutDir: true,
             sourcemap: false,
+            // WebKitGTK (Linux) and WebView2 (Windows) are both modern engines.
+            target: ['es2022', 'safari15', 'chrome105'],
             minify: 'esbuild',
             reportCompressedSize: false,
             rollupOptions: {
                 treeshake: true,
             },
         },
-        plugins: [
-            proxyAudioPlugin(),
-            authGatePlugin(),
-            uploadPlugin(),
-            blobAssetPlugin(),
-            svgUse(),
-            VitePWA({
-                registerType: 'prompt',
-                devOptions: {
-                    enabled: true,
-                    type: 'classic',
-                    disableRuntimeConfig: true,
-                    suppressWarnings: true,
-                },
-                workbox: {
-                    skipWaiting: true,
-                    clientsClaim: true,
-                    globPatterns: ['index.html', 'manifest.json'],
-                    cleanupOutdatedCaches: true,
-                    maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MiB limit
-                    // Define runtime caching strategies
-                    runtimeCaching: [
-                        {
-                            urlPattern: ({ request }) =>
-                                request.destination === 'script' || request.destination === 'worker',
-                            handler: isDev ? 'NetworkFirst' : 'CacheFirst',
-                            options: {
-                                cacheName: 'scripts',
-                                expiration: {
-                                    maxEntries: 200,
-                                    maxAgeSeconds: 60 * 24 * 60 * 60,
-                                },
-                            },
-                        },
-                        {
-                            urlPattern: ({ request }) =>
-                                request.destination === 'style' || request.destination === 'font',
-                            handler: 'CacheFirst',
-                            options: {
-                                cacheName: 'static-resources',
-                                expiration: {
-                                    maxEntries: 60,
-                                    maxAgeSeconds: 60 * 24 * 60 * 60,
-                                },
-                            },
-                        },
-                        {
-                            urlPattern: ({ request }) => request.destination === 'image',
-                            handler: 'StaleWhileRevalidate',
-                            options: {
-                                cacheName: 'images',
-                                expiration: {
-                                    maxEntries: 500,
-                                    maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
-                                },
-                            },
-                        },
-                        {
-                            urlPattern: ({ request }) =>
-                                request.destination === 'audio' || request.destination === 'video',
-                            handler: 'CacheFirst',
-                            options: {
-                                cacheName: 'media',
-                                expiration: {
-                                    maxEntries: 50,
-                                    maxAgeSeconds: 60 * 24 * 60 * 60, // 60 Days
-                                },
-                                rangeRequests: true, // Support scrubbing
-                            },
-                        },
-                    ],
-                },
-                includeAssets: ['discord.html'],
-                manifest: false, // Use existing public/manifest.json
-            }),
-        ],
+        plugins: [blobAssetPlugin(), svgUse()],
     };
 });

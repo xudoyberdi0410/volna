@@ -1,8 +1,4 @@
 //js/app.js
-import './sentry.js';
-import discordSvg from '../images/discord.svg?svg&size=22';
-import googleSvg from '../images/google.svg?svg&size=22';
-import githubSvg from '../images/github.svg?svg&size=22';
 import { isIos, isSafari } from './platform-detection.js';
 import { hapticLight } from './haptics.js';
 import { MusicAPI } from './music-api.js';
@@ -11,9 +7,7 @@ import {
     themeManager,
     nowPlayingSettings,
     fullscreenCoverClickSettings,
-    downloadQualitySettings,
     sidebarSettings,
-    pwaUpdateSettings,
     modalSettings,
     keyboardShortcuts,
 } from './storage.js';
@@ -22,20 +16,15 @@ import { Player } from './player.js';
 import { MultiScrobbler } from './multi-scrobbler.js';
 import { LyricsManager, openLyricsPanel, clearLyricsPanelSync } from './lyrics.js';
 import { createRouter, updateTabTitle, navigate } from './router.js';
-import { initializePlayerEvents, initializeTrackInteractions, handleTrackAction } from './events.js';
+import { initializePlayerEvents, initializeTrackInteractions } from './events.js';
 import { initializeUIInteractions, updateLocalFilesSupportUI } from './ui-interactions.js';
-import { debounce, getShareUrl, normalizeQualityToken, sanitizeForFilename } from './utils.js';
+import { debounce, normalizeQualityToken, sanitizeForFilename } from './utils.js';
 import { sidePanelManager } from './side-panel.js';
 import { db } from './db.js';
-import { showNotification } from './downloads.js';
-import { syncManager } from './accounts/pocketbase.js';
-import { authManager } from './accounts/auth.js';
-import { registerSW } from 'virtual:pwa-register';
-import { openEditProfile } from './profile.js';
+import { showNotification } from './notifications.js';
 import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
 import { initTracker } from './tracker.js';
-import { initAnalytics } from './analytics.js';
 import {
     parseCSV,
     parseJSPF,
@@ -58,38 +47,8 @@ import {
 } from './icons.js';
 import { HiFiClient } from './HiFi.js';
 
-// Capture real iOS state before spoofing (needed for background audio)
-if (typeof window !== 'undefined') {
-    const _ua = navigator.userAgent.toLowerCase();
-    // Spoof User-Agent to bypass Google's embedded browser check
-    Object.defineProperty(navigator, 'userAgent', {
-        get: function () {
-            return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-        },
-    });
-
-    // analytics
-    const plausibleScript = document.createElement('script');
-    plausibleScript.async = true;
-    plausibleScript.src = 'https://plausible.canine.tools/js/pa-dCMvQpiD1-AJmi8o3xviO.js';
-    document.head.appendChild(plausibleScript);
-
-    window.plausible =
-        window.plausible ||
-        function () {
-            (window.plausible.q = window.plausible.q || []).push(arguments);
-        };
-    window.plausible.init =
-        window.plausible.init ||
-        function (i) {
-            window.plausible.o = i || {};
-        };
-    window.plausible.init();
-}
-
 // Lazy-loaded modules
 let settingsModule = null;
-let downloadsModule = null;
 let metadataModule = null;
 
 async function loadSettingsModule() {
@@ -97,13 +56,6 @@ async function loadSettingsModule() {
         settingsModule = await import('./settings.js');
     }
     return settingsModule;
-}
-
-async function loadDownloadsModule() {
-    if (!downloadsModule) {
-        downloadsModule = await import('./downloads.js');
-    }
-    return downloadsModule;
 }
 
 let contributorsLoaded = false;
@@ -304,7 +256,7 @@ function hideOfflineNotification() {
     }
 }
 
-async function disablePwaForAuthGate() {
+async function unregisterServiceWorkers() {
     if (!('serviceWorker' in navigator)) return;
 
     try {
@@ -324,37 +276,16 @@ async function disablePwaForAuthGate() {
     }
 }
 
-async function clearDevPwaRuntimeCaches() {
-    if (!import.meta.env.DEV || !('caches' in window)) return;
-
-    try {
-        await Promise.all(['scripts', 'static-resources', 'images', 'media'].map((key) => caches.delete(key)));
-    } catch (error) {
-        console.warn('Failed to clear dev PWA runtime caches:', error);
-    }
-}
-
-async function uploadCoverImage(file) {
-    try {
-        const response = await fetch(`https://worker.uploads.monochrome.qzz.io/${file.name}`, {
-            method: 'PUT',
-            headers: {
-                'x-api-key': 'if_youre_reading_this_fuck_off',
-                'Content-Type': file.type || 'application/octet-stream',
-            },
-            body: file,
-        });
-
-        if (!response.ok) {
-            if (response.status === 413) throw new Error('File exceeds 10MB');
-            throw new Error(`Upload failed: ${response.status}`);
-        }
-
-        return `https://images.monochrome.qzz.io/${await response.text()}`;
-    } catch (error) {
-        console.error('Cover upload error:', error);
-        throw error;
-    }
+// Playlist covers are stored locally as data URLs (no upload service).
+function uploadCoverImage(file) {
+    const MAX_BYTES = 10 * 1024 * 1024;
+    if (file.size > MAX_BYTES) return Promise.reject(new Error('File exceeds 10MB'));
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -379,9 +310,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Haptic feedback on every click
     document.addEventListener('click', () => hapticLight(), { capture: true });
-
-    // Initialize analytics
-    initAnalytics();
 
     // Populate commit info
     {
@@ -648,12 +576,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Toggle Share Button visibility on switch change
-    document.getElementById('playlist-public-toggle')?.addEventListener('change', (e) => {
-        const shareBtn = document.getElementById('playlist-share-btn');
-        if (shareBtn) shareBtn.style.display = e.target.checked ? 'flex' : 'none';
-    });
-
     document.getElementById('close-fullscreen-cover-btn')?.addEventListener('click', async () => {
         await closeFullscreenOverlay();
     });
@@ -913,20 +835,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    document.getElementById('download-current-btn')?.addEventListener('click', async () => {
-        if (Player.instance.currentTrack) {
-            await handleTrackAction(
-                'download',
-                Player.instance.currentTrack,
-                Player.instance,
-                MusicAPI.instance,
-                lyricsManager,
-                'track',
-                UIRenderer.instance
-            );
-        }
-    });
-
     // Auto-update lyrics when track changes
     let previousTrackId = null;
     const handleActiveAudioPlay = async (event) => {
@@ -1013,13 +921,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (shuffleBtn) shuffleBtn.classList.remove('active');
                     Player.instance.shuffleActive = false;
                     await Player.instance.playTrackFromQueue();
-
-                    const { showNotification } = await loadDownloadsModule();
                     showNotification('Shuffling album');
                 }
             } catch (error) {
                 console.error('Failed to shuffle album:', error);
-                const { showNotification } = await loadDownloadsModule();
                 showNotification('Failed to shuffle album');
             }
         }
@@ -1081,96 +986,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (shuffleBtn) shuffleBtn.classList.remove('active');
                 Player.instance.shuffleActive = false;
                 await Player.instance.playTrackFromQueue();
-
-                const { showNotification } = await loadDownloadsModule();
                 showNotification('Shuffling artist discography');
             } catch (error) {
                 console.error('Failed to shuffle artist tracks:', error);
-                const { showNotification } = await loadDownloadsModule();
                 showNotification('Failed to shuffle artist tracks');
             } finally {
                 if (document.body.contains(btn)) {
                     btn.disabled = false;
                     btn.innerHTML = originalHTML;
                 }
-            }
-        }
-        if (e.target.closest('#download-mix-btn')) {
-            const btn = e.target.closest('#download-mix-btn');
-            if (btn.disabled) return;
-
-            const mixId = window.location.pathname.split('/')[2];
-            if (!mixId) return;
-
-            btn.disabled = true;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = `${SVG_ANIMATE_SPIN(20)}<span>Downloading...</span>`;
-
-            try {
-                const { mix, tracks } = await MusicAPI.instance.getMix(mixId);
-                const { downloadPlaylist } = await loadDownloadsModule();
-                await downloadPlaylist(
-                    mix,
-                    tracks,
-                    MusicAPI.instance,
-                    downloadQualitySettings.getQuality(),
-                    lyricsManager
-                );
-            } catch (error) {
-                console.error('Mix download failed:', error);
-                alert('Failed to download mix: ' + error.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
-            }
-        }
-
-        if (e.target.closest('#download-playlist-btn')) {
-            const btn = e.target.closest('#download-playlist-btn');
-            if (btn.disabled) return;
-
-            const playlistId = window.location.pathname.split('/')[2];
-            if (!playlistId) return;
-
-            btn.disabled = true;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = `${SVG_ANIMATE_SPIN(20)}<span>Downloading...</span>`;
-
-            try {
-                let playlist, tracks;
-                let userPlaylist = await db.getPlaylist(playlistId);
-
-                if (!userPlaylist) {
-                    try {
-                        userPlaylist = await syncManager.getPublicPlaylist(playlistId);
-                    } catch {
-                        // Not a public playlist
-                    }
-                }
-
-                if (userPlaylist) {
-                    playlist = { ...userPlaylist, title: userPlaylist.name || userPlaylist.title };
-                    tracks = userPlaylist.tracks || [];
-                } else {
-                    const data = await MusicAPI.instance.getPlaylist(playlistId);
-                    playlist = data.playlist;
-                    tracks = data.tracks;
-                }
-
-                const { downloadPlaylist } = await loadDownloadsModule();
-                await downloadPlaylist(
-                    playlist,
-                    tracks,
-                    MusicAPI.instance,
-                    downloadQualitySettings.getQuality(),
-                    lyricsManager
-                );
-            } catch (error) {
-                console.error('Playlist download failed:', error);
-                alert('Failed to download playlist: ' + error.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
             }
         }
 
@@ -1200,12 +1024,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('xspf-import-panel').style.display = 'none';
             document.getElementById('xml-import-panel').style.display = 'none';
             document.getElementById('m3u-import-panel').style.display = 'none';
-
-            // Reset Public Toggle
-            const publicToggle = document.getElementById('playlist-public-toggle');
-            const shareBtn = document.getElementById('playlist-share-btn');
-            if (publicToggle) publicToggle.checked = false;
-            if (shareBtn) shareBtn.style.display = 'none';
 
             // Reset cover upload state
             const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
@@ -1240,8 +1058,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const cover = document.getElementById('folder-cover-input').value.trim();
 
             if (name) {
-                const folder = await db.createFolder(name, cover);
-                await syncManager.syncUserFolder(folder, 'create');
+                await db.createFolder(name, cover);
                 UIRenderer.instance.renderLibraryPage();
                 document.getElementById('folder-modal').classList.remove('active');
             } else {
@@ -1270,8 +1087,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const folderId = window.location.pathname.split('/')[2];
             if (folderId && confirm('Are you sure you want to delete this folder?')) {
                 await db.deleteFolder(folderId);
-                // Sync deletion to cloud
-                await syncManager.syncUserFolder({ id: folderId }, 'delete');
                 navigate('/library');
             }
         }
@@ -1279,31 +1094,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target.closest('#playlist-modal-save')) {
             let name = document.getElementById('playlist-name-input').value.trim();
             let description = document.getElementById('playlist-description-input').value.trim();
-            const isPublic = document.getElementById('playlist-public-toggle')?.checked;
             const isStrictAlbumMatch = document.getElementById('strict-album-match-toggle')?.checked;
 
             if (name) {
                 const modal = document.getElementById('playlist-modal');
                 const editingId = modal.dataset.editingId;
-
-                const handlePublicStatus = async (playlist) => {
-                    playlist.isPublic = isPublic;
-                    if (isPublic) {
-                        try {
-                            await syncManager.publishPlaylist(playlist);
-                        } catch (e) {
-                            console.error('Failed to publish playlist:', e);
-                            alert('Failed to publish playlist. Please ensure you are logged in.');
-                        }
-                    } else {
-                        try {
-                            await syncManager.unpublishPlaylist(playlist.id);
-                        } catch {
-                            // Ignore error if it wasn't public
-                        }
-                    }
-                    return playlist;
-                };
 
                 if (editingId) {
                     // Edit
@@ -1313,9 +1108,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             playlist.name = name;
                             playlist.cover = cover;
                             playlist.description = description;
-                            await handlePublicStatus(playlist);
                             await db.performTransaction('user_playlists', 'readwrite', (store) => store.put(playlist));
-                            await syncManager.syncUserPlaylist(playlist, 'update');
                             UIRenderer.instance.renderLibraryPage();
                             // Also update current page if we are on it
                             if (window.location.pathname === `/userplaylist/${editingId}`) {
@@ -1822,10 +1615,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
 
                     await db.createPlaylist(name, tracks, cover, description).then(async (playlist) => {
-                        await handlePublicStatus(playlist);
-                        // Update DB again with isPublic flag
-                        await db.performTransaction('user_playlists', 'readwrite', (store) => store.put(playlist));
-                        await syncManager.syncUserPlaylist(playlist, 'create');
                         UIRenderer.instance.renderLibraryPage();
                         modal.classList.remove('active');
                     });
@@ -1849,25 +1638,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     document.getElementById('playlist-name-input').value = playlist.name;
                     document.getElementById('playlist-cover-input').value = playlist.cover || '';
                     document.getElementById('playlist-description-input').value = playlist.description || '';
-
-                    // Set Public Toggle
-                    const publicToggle = document.getElementById('playlist-public-toggle');
-                    const shareBtn = document.getElementById('playlist-share-btn');
-
-                    // Check if actually public in Pocketbase to be sure (async) or trust local flag
-                    // We trust local flag for UI speed, but could verify.
-                    if (publicToggle) publicToggle.checked = !!playlist.isPublic;
-
-                    if (shareBtn) {
-                        shareBtn.style.display = playlist.isPublic ? 'flex' : 'none';
-                        shareBtn.onclick = () => {
-                            const url = getShareUrl(`/userplaylist/${playlist.id}`);
-                            navigator.clipboard
-                                .writeText(url)
-                                .then(() => alert('Link copied to clipboard!'))
-                                .catch(console.error);
-                        };
-                    }
 
                     // Set cover upload state - show URL input if there's an existing cover
                     const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
@@ -1905,7 +1675,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const playlistId = card.dataset.userPlaylistId;
             if (confirm('Are you sure you want to delete this playlist?')) {
                 await db.deletePlaylist(playlistId);
-                await syncManager.syncUserPlaylist({ id: playlistId }, 'delete');
                 UIRenderer.instance.renderLibraryPage();
             }
         }
@@ -1932,21 +1701,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                         document.getElementById('playlist-name-input').value = playlist.name;
                         document.getElementById('playlist-cover-input').value = playlist.cover || '';
                         document.getElementById('playlist-description-input').value = playlist.description || '';
-
-                        const publicToggle = document.getElementById('playlist-public-toggle');
-                        const shareBtn = document.getElementById('playlist-share-btn');
-
-                        if (publicToggle) publicToggle.checked = !!playlist.isPublic;
-                        if (shareBtn) {
-                            shareBtn.style.display = playlist.isPublic ? 'flex' : 'none';
-                            shareBtn.onclick = async () => {
-                                const url = getShareUrl(`/userplaylist/${playlist.id}`);
-                                await navigator.clipboard
-                                    .writeText(url)
-                                    .then(() => alert('Link copied to clipboard!'))
-                                    .catch(console.error);
-                            };
-                        }
 
                         // Set cover upload state - show URL input if there's an existing cover
                         const coverUploadBtn = document.getElementById('playlist-cover-upload-btn');
@@ -1984,7 +1738,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             const playlistId = window.location.pathname.split('/')[2];
             if (confirm('Are you sure you want to delete this playlist?')) {
                 await db.deletePlaylist(playlistId);
-                await syncManager.syncUserPlaylist({ id: playlistId }, 'delete');
                 navigate('/library');
             }
         }
@@ -2021,8 +1774,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
 
                 if (trackId) {
-                    const updatedPlaylist = await db.removeTrackFromPlaylist(playlistId, trackId, trackType);
-                    await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
+                    await db.removeTrackFromPlaylist(playlistId, trackId, trackType);
                     const scrollTop = document.querySelector('.main-content').scrollTop;
                     await UIRenderer.instance.renderPlaylistPage(playlistId, 'user');
                     document.querySelector('.main-content').scrollTop = scrollTop;
@@ -2043,18 +1795,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (userPlaylist) {
                     tracks = userPlaylist.tracks;
                 } else {
-                    // Try API, if fail, try Public Pocketbase
-                    try {
-                        const { tracks: apiTracks } = await MusicAPI.instance.getPlaylist(playlistId);
-                        tracks = apiTracks;
-                    } catch (e) {
-                        const publicPlaylist = await syncManager.getPublicPlaylist(playlistId);
-                        if (publicPlaylist) {
-                            tracks = publicPlaylist.tracks;
-                        } else {
-                            throw e;
-                        }
-                    }
+                    const { tracks: apiTracks } = await MusicAPI.instance.getPlaylist(playlistId);
+                    tracks = apiTracks;
                 }
                 if (tracks.length > 0) {
                     Player.instance.setQueue(tracks, 0);
@@ -2064,36 +1806,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } catch (error) {
                 console.error('Failed to play playlist:', error);
                 alert('Failed to play playlist: ' + error.message);
-            }
-        }
-
-        if (e.target.closest('#download-album-btn')) {
-            const btn = e.target.closest('#download-album-btn');
-            if (btn.disabled) return;
-
-            const albumId = window.location.pathname.split('/')[2];
-            if (!albumId) return;
-
-            btn.disabled = true;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = `${SVG_ANIMATE_SPIN(20)}<span>Downloading...</span>`;
-
-            try {
-                const { album, tracks } = await MusicAPI.instance.getAlbum(albumId);
-                const { downloadAlbum } = await loadDownloadsModule();
-                await downloadAlbum(
-                    album,
-                    tracks,
-                    MusicAPI.instance,
-                    downloadQualitySettings.getQuality(),
-                    lyricsManager
-                );
-            } catch (error) {
-                console.error('Album download failed:', error);
-                alert('Failed to download album: ' + error.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
             }
         }
 
@@ -2108,7 +1820,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const { tracks } = await MusicAPI.instance.getAlbum(albumId);
 
                 if (!tracks || tracks.length === 0) {
-                    const { showNotification } = await loadDownloadsModule();
                     showNotification('No tracks found in this album.');
                     return;
                 }
@@ -2166,14 +1877,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     try {
                         await db.addTracksToPlaylist(playlistId, tracks);
-                        const updatedPlaylist = await db.getPlaylist(playlistId);
-                        await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
-                        const { showNotification } = await loadDownloadsModule();
                         showNotification(`Added ${tracks.length} tracks to playlist.`);
                         closeModal();
                     } catch (err) {
                         console.error(err);
-                        const { showNotification } = await loadDownloadsModule();
                         showNotification('Failed to add tracks.');
                     }
                 };
@@ -2191,7 +1898,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 modal.classList.add('active');
             } catch (error) {
                 console.error('Failed to prepare album for playlist:', error);
-                const { showNotification } = await loadDownloadsModule();
                 showNotification('Failed to load album tracks.');
             }
         }
@@ -2287,58 +1993,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        if (e.target.closest('#download-liked-tracks-btn')) {
-            const btn = e.target.closest('#download-liked-tracks-btn');
-            if (btn.disabled) return;
-
-            btn.disabled = true;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = SVG_ANIMATE_SPIN(16);
-
-            try {
-                const likedTracks = await db.getFavorites('track');
-                if (likedTracks.length === 0) {
-                    alert('No liked tracks to download.');
-                    return;
-                }
-                const { downloadLikedTracks } = await loadDownloadsModule();
-                await downloadLikedTracks(
-                    likedTracks,
-                    MusicAPI.instance,
-                    downloadQualitySettings.getQuality(),
-                    lyricsManager
-                );
-            } catch (error) {
-                console.error('Liked tracks download failed:', error);
-                alert('Failed to download liked tracks: ' + error.message);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
-            }
-        }
-
-        if (e.target.closest('#download-discography-btn')) {
-            const btn = e.target.closest('#download-discography-btn');
-            if (btn.disabled) return;
-
-            const artistId = window.location.pathname.split('/')[2];
-            if (!artistId) return;
-
-            try {
-                const artist = await MusicAPI.instance.getArtist(artistId);
-                showDiscographyDownloadModal(
-                    artist,
-                    MusicAPI.instance,
-                    downloadQualitySettings.getQuality(),
-                    lyricsManager,
-                    btn
-                );
-            } catch (error) {
-                console.error('Failed to load artist for discography download:', error);
-                alert('Failed to load artist: ' + error.message);
-            }
-        }
-
         // Local Files Logic lollll
         if (e.target.closest('#select-local-folder-btn') || e.target.closest('#change-local-folder-btn')) {
             const isChange = e.target.closest('#change-local-folder-btn') !== null;
@@ -2402,10 +2056,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (dropdown) dropdown.style.display = 'none';
         if (suggestion.kind === 'song' && suggestion.track?.tracksTrackId) {
             navigate(`/track/${suggestion.track.tracksTrackId}`);
-            return;
-        }
-        if (suggestion.kind === 'song' && suggestion.track?.appleMusicId) {
-            navigate(`/track/apple/${suggestion.track.appleMusicId}`);
             return;
         }
         performSearch(query);
@@ -2565,7 +2215,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (event && event.state && event.state.exitTrap) {
-            const { showNotification } = await loadDownloadsModule();
             showNotification('Press back again to exit');
             setTimeout(() => {
                 if (history.state && history.state.exitTrap) {
@@ -2625,53 +2274,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // PWA Update Logic
-    let isNativeApp = false;
-    try {
-        const { Capacitor } = await import('@capacitor/core');
-        isNativeApp = Capacitor.isNativePlatform();
-    } catch {}
-
-    if (isNativeApp) {
-        console.log('PWA disabled for native app shell');
-        await disablePwaForAuthGate().catch(console.error);
-    } else if (window.__AUTH_GATE__) {
-        console.log('PWA disabled for auth gate');
-        await disablePwaForAuthGate().catch(console.error);
-    } else {
-        await clearDevPwaRuntimeCaches();
-
-        {
-            const updateSW = registerSW({
-                onRegisteredSW(swScriptUrl, registration) {
-                    console.log('Service Worker registered:', swScriptUrl, registration?.scope, {
-                        controlled: !!navigator.serviceWorker.controller,
-                    });
-                },
-                onRegisterError(error) {
-                    console.warn('Service Worker registration failed:', error);
-                },
-                onNeedRefresh() {
-                    if (import.meta.env.DEV) {
-                        console.info('Service Worker update available in dev; reload manually when ready.');
-                        return;
-                    }
-
-                    if (pwaUpdateSettings.isAutoUpdateEnabled()) {
-                        // Auto-update: immediately activate the new service worker
-                        updateSW(true);
-                    } else {
-                        // Show notification with Update button and dismiss option
-                        showUpdateNotification(() => {
-                            updateSW(true);
-                        });
-                    }
-                },
-                onOfflineReady() {
-                    console.log('App ready to work offline');
-                },
-            });
-        }
-    }
+    // Volna is a desktop app: no service worker. Clean up any left over from a web build.
+    await unregisterServiceWorkers().catch(console.error);
 
     document.getElementById('show-shortcuts-btn')?.addEventListener('click', () => {
         showKeyboardShortcuts();
@@ -2748,158 +2352,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         observer.observe(contextMenu, { attributes: true });
     }
-
-    const headerAccountBtn = document.getElementById('header-account-btn');
-    const headerAccountDropdown = document.getElementById('header-account-dropdown');
-    const headerAccountImg = document.getElementById('header-account-img');
-    const headerAccountIcon = document.getElementById('header-account-icon');
-
-    // Temporarily disable accounts - show popup
-    const isAccountsDisabled = false;
-
-    if (headerAccountBtn && headerAccountDropdown) {
-        if (isAccountsDisabled) {
-            headerAccountBtn.style.opacity = '0.5';
-            headerAccountBtn.style.cursor = 'not-allowed';
-            headerAccountBtn.title = 'Accounts temporarily unavailable';
-            headerAccountBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                alert('.');
-            });
-        } else {
-            headerAccountBtn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                headerAccountDropdown.classList.toggle('active');
-                await updateAccountDropdown();
-            });
-        }
-
-        document.addEventListener('click', (e) => {
-            if (!headerAccountBtn.contains(e.target) && !headerAccountDropdown.contains(e.target)) {
-                headerAccountDropdown.classList.remove('active');
-            }
-        });
-
-        async function updateAccountDropdown() {
-            const user = authManager?.user;
-            headerAccountDropdown.innerHTML = '';
-
-            if (!user) {
-                const iconBtnStyle =
-                    'background:none;border:none;cursor:pointer;width:32px;height:32px;padding:0;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;transition:opacity 0.15s';
-                headerAccountDropdown.innerHTML = `
-                    <span style="font-size:0.75rem;color:var(--muted-foreground);padding:0.25rem 0.5rem">Connect with</span>
-                    <div style="display:flex;width:100%;justify-content:space-evenly;padding:0.25rem 0.5rem;align-items:center">
-                        <button id="header-discord-auth" title="Discord" style="${iconBtnStyle}">${discordSvg}</button>
-                        <button id="header-google-auth" title="Google" style="${iconBtnStyle}">${googleSvg}</button>
-                        <button id="header-github-auth" title="GitHub" style="${iconBtnStyle}">${githubSvg}</button>
-                    </div>
-                    <hr style="border:none;border-top:1px solid var(--border);margin:0.25rem 0">
-                    <button class="btn-secondary" id="header-email-auth">Connect with Email</button>
-                `;
-
-                for (const id of ['header-discord-auth', 'header-google-auth', 'header-github-auth']) {
-                    const btn = document.getElementById(id);
-                    const svg = btn.querySelector('svg');
-                    svg.style.display = 'block';
-                    svg.style.filter = 'brightness(0) invert(1)';
-                    svg.style.transition = 'filter 0.15s';
-                    btn.addEventListener('mouseenter', () => {
-                        svg.style.filter = 'brightness(0) invert(0.5)';
-                    });
-                    btn.addEventListener('mouseleave', () => {
-                        svg.style.filter = 'brightness(0) invert(1)';
-                    });
-                }
-
-                document.getElementById('header-google-auth').onclick = () => authManager.signInWithGoogle();
-                document.getElementById('header-github-auth').onclick = () => authManager.signInWithGitHub();
-                document.getElementById('header-discord-auth').onclick = () => authManager.signInWithDiscord();
-                document.getElementById('header-email-auth').onclick = () => {
-                    document.getElementById('email-auth-modal').classList.add('active');
-                    headerAccountDropdown.classList.remove('active');
-                };
-            } else {
-                const data = await syncManager.getUserData();
-                const hasProfile = data && data.profile && data.profile.username;
-
-                if (hasProfile) {
-                    headerAccountDropdown.innerHTML = `
-                        <button class="btn-secondary" id="header-view-profile">My Profile</button>
-                        <button class="btn-secondary danger" id="header-sign-out">Sign Out</button>
-                    `;
-                    document.getElementById('header-view-profile').onclick = () => {
-                        navigate(`/user/@${data.profile.username}`);
-                        headerAccountDropdown.classList.remove('active');
-                    };
-                } else {
-                    headerAccountDropdown.innerHTML = `
-                        <button class="btn-primary" id="header-create-profile">Create Profile</button>
-                        <button class="btn-secondary danger" id="header-sign-out">Sign Out</button>
-                    `;
-                    document.getElementById('header-create-profile').onclick = async () => {
-                        openEditProfile().catch(console.error);
-                        headerAccountDropdown.classList.remove('active');
-                    };
-                }
-
-                document.getElementById('header-sign-out').onclick = () => authManager.signOut();
-            }
-        }
-
-        authManager.onAuthStateChanged(async (user) => {
-            if (user) {
-                const data = await syncManager.getUserData();
-                if (data && data.profile && data.profile.avatar_url) {
-                    headerAccountImg.src = data.profile.avatar_url + '?s=100';
-                    headerAccountImg.style.display = 'block';
-                    headerAccountIcon.style.display = 'none';
-                    return;
-                }
-            }
-            headerAccountImg.style.display = 'none';
-            headerAccountIcon.style.display = 'flex';
-        });
-    }
 });
-
-function showUpdateNotification(updateCallback) {
-    // Remove any existing update notification
-    const existingNotification = document.querySelector('.update-notification');
-    if (existingNotification) {
-        existingNotification.remove();
-    }
-
-    const notification = document.createElement('div');
-    notification.className = 'update-notification';
-    notification.innerHTML = `
-        <div>
-            <strong>Update Available</strong>
-            <p>A new version of Monochrome is available.</p>
-        </div>
-        <div class="update-notification-actions">
-            <button class="btn-primary" id="update-now-btn">Update Now</button>
-            <button class="btn-icon" id="dismiss-update-btn" title="Dismiss">
-                ${SVG_CLOSE(16)}
-            </button>
-        </div>
-    `;
-    document.body.appendChild(notification);
-
-    document.getElementById('update-now-btn').addEventListener('click', () => {
-        if (typeof updateCallback === 'function') {
-            updateCallback();
-        } else if (updateCallback && updateCallback.postMessage) {
-            updateCallback.postMessage({ action: 'skipWaiting' });
-        } else {
-            window.location.reload();
-        }
-    });
-
-    document.getElementById('dismiss-update-btn').addEventListener('click', () => {
-        notification.remove();
-    });
-}
 
 function escapeHtml(text) {
     const div = document.createElement('div');
@@ -3113,79 +2566,6 @@ function showMissingTracksNotification(missingTracks, playlistName) {
     };
 
     modal.addEventListener('click', handleClose);
-    modal.classList.add('active');
-}
-
-function showDiscographyDownloadModal(artist, api, quality, lyricsManager, triggerBtn) {
-    const modal = document.getElementById('discography-download-modal');
-
-    document.getElementById('discography-artist-name').textContent = artist.name;
-    document.getElementById('albums-count').textContent = artist.albums?.length || 0;
-    document.getElementById('eps-count').textContent = (artist.eps || []).filter((a) => a.type === 'EP').length;
-    document.getElementById('singles-count').textContent = (artist.eps || []).filter((a) => a.type === 'SINGLE').length;
-
-    // Reset checkboxes
-    document.getElementById('download-albums').checked = true;
-    document.getElementById('download-eps').checked = true;
-    document.getElementById('download-singles').checked = true;
-
-    const closeModal = () => {
-        modal.classList.remove('active');
-    };
-
-    const handleClose = (e) => {
-        if (
-            e.target === modal ||
-            e.target.classList.contains('modal-overlay') ||
-            e.target.closest('.close-modal-btn') ||
-            e.target.id === 'cancel-discography-download'
-        ) {
-            closeModal();
-        }
-    };
-
-    modal.addEventListener('click', handleClose);
-
-    document.getElementById('start-discography-download').onclick = async () => {
-        const includeAlbums = document.getElementById('download-albums').checked;
-        const includeEPs = document.getElementById('download-eps').checked;
-        const includeSingles = document.getElementById('download-singles').checked;
-
-        if (!includeAlbums && !includeEPs && !includeSingles) {
-            alert('Please select at least one type of release to download.');
-            return;
-        }
-
-        closeModal();
-
-        // Filter releases based on selection
-        let selectedReleases = [];
-        if (includeAlbums) {
-            selectedReleases = selectedReleases.concat(artist.albums || []);
-        }
-        if (includeEPs) {
-            selectedReleases = selectedReleases.concat((artist.eps || []).filter((a) => a.type === 'EP'));
-        }
-        if (includeSingles) {
-            selectedReleases = selectedReleases.concat((artist.eps || []).filter((a) => a.type === 'SINGLE'));
-        }
-
-        triggerBtn.disabled = true;
-        const originalHTML = triggerBtn.innerHTML;
-        triggerBtn.innerHTML = `${SVG_ANIMATE_SPIN(20)}<span>Downloading...</span>`;
-
-        try {
-            const { downloadDiscography } = await loadDownloadsModule();
-            await downloadDiscography(artist, selectedReleases, api, quality, lyricsManager);
-        } catch (error) {
-            console.error('Discography download failed:', error);
-            alert('Failed to download discography: ' + error.message);
-        } finally {
-            triggerBtn.disabled = false;
-            triggerBtn.innerHTML = originalHTML;
-        }
-    };
-
     modal.classList.add('active');
 }
 

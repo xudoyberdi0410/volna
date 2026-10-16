@@ -388,7 +388,6 @@ export async function renderTrackerArtistPage(sheetId, container) {
     const metaEl = document.getElementById('tracker-artist-detail-meta');
     const projectsContainer = document.getElementById('tracker-artist-projects-container');
     const playBtn = document.getElementById('play-tracker-artist-btn');
-    const downloadBtn = document.getElementById('download-tracker-artist-btn');
 
     setArtistHeaderImage(imageEl, artist.name);
     nameEl.textContent = artist.name;
@@ -413,13 +412,6 @@ export async function renderTrackerArtistPage(sheetId, container) {
                 Player.instance.setQueue(shuffled, 0);
                 Player.instance.playTrackFromQueue();
             }
-        };
-    }
-
-    // Set up download button
-    if (downloadBtn) {
-        downloadBtn.onclick = () => {
-            alert('Bulk download coming soon! You can download individual tracks from the project pages.');
         };
     }
 

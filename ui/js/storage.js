@@ -740,34 +740,6 @@ export const replayGainSettings = {
     },
 };
 
-export const downloadQualitySettings = {
-    STORAGE_KEY: 'download-quality',
-    getQuality() {
-        try {
-            const stored = localStorage.getItem(this.STORAGE_KEY) || 'HI_RES_LOSSLESS';
-            // Migrate legacy value to renamed format
-            if (stored === 'MP3_320') {
-                this.setQuality('FFMPEG_MP3_320');
-                return 'FFMPEG_MP3_320';
-            }
-
-            // The unified API no longer uses the generic Atmos request. Preserve
-            // the user's intent by migrating it to the shared provider tier.
-            if (stored === 'DOLBY_ATMOS') {
-                this.setQuality('DOLBY_ATMOS_EAC3_HIGH');
-                return 'DOLBY_ATMOS_EAC3_HIGH';
-            }
-
-            return stored;
-        } catch {
-            return 'HI_RES_LOSSLESS';
-        }
-    },
-    setQuality(quality) {
-        localStorage.setItem(this.STORAGE_KEY, quality);
-    },
-};
-
 export const preferDolbyAtmosSettings = {
     STORAGE_KEY: 'prefer-dolby-atmos',
     isEnabled() {
@@ -783,21 +755,6 @@ export const preferDolbyAtmosSettings = {
     },
     setEnabled(enabled) {
         localStorage.setItem(this.STORAGE_KEY, enabled ? 'true' : 'false');
-    },
-};
-
-export const losslessContainerSettings = {
-    STORAGE_KEY: 'lossless-container',
-    getContainer() {
-        try {
-            const stored = localStorage.getItem(this.STORAGE_KEY) || 'flac';
-            return stored;
-        } catch {
-            return 'flac';
-        }
-    },
-    setContainer(container) {
-        localStorage.setItem(this.STORAGE_KEY, container);
     },
 };
 
@@ -964,117 +921,6 @@ export const trackDateSettings = {
 
     setUseAlbumYear(enabled) {
         localStorage.setItem(this.STORAGE_KEY, enabled ? 'true' : 'false');
-    },
-};
-
-export const playlistSettings = {
-    M3U_KEY: 'playlist-generate-m3u',
-    M3U8_KEY: 'playlist-generate-m3u8',
-    CUE_KEY: 'playlist-generate-cue',
-    NFO_KEY: 'playlist-generate-nfo',
-    JSON_KEY: 'playlist-generate-json',
-    RELATIVE_PATHS_KEY: 'playlist-relative-paths',
-    SEPARATE_DISCS_KEY: 'playlist-separate-discs-in-zip',
-    INCLUDE_COVER_KEY: 'playlist-include-cover',
-
-    shouldGenerateM3U() {
-        try {
-            const val = localStorage.getItem(this.M3U_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    shouldGenerateM3U8() {
-        try {
-            return localStorage.getItem(this.M3U8_KEY) === 'true';
-        } catch {
-            return false;
-        }
-    },
-
-    shouldGenerateCUE() {
-        try {
-            return localStorage.getItem(this.CUE_KEY) === 'true';
-        } catch {
-            return false;
-        }
-    },
-
-    shouldGenerateNFO() {
-        try {
-            return localStorage.getItem(this.NFO_KEY) === 'true';
-        } catch {
-            return false;
-        }
-    },
-
-    shouldGenerateJSON() {
-        try {
-            return localStorage.getItem(this.JSON_KEY) === 'true';
-        } catch {
-            return false;
-        }
-    },
-
-    shouldUseRelativePaths() {
-        try {
-            const val = localStorage.getItem(this.RELATIVE_PATHS_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    shouldSeparateDiscsInZip() {
-        try {
-            const val = localStorage.getItem(this.SEPARATE_DISCS_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    setGenerateM3U(enabled) {
-        localStorage.setItem(this.M3U_KEY, enabled ? 'true' : 'false');
-    },
-
-    setGenerateM3U8(enabled) {
-        localStorage.setItem(this.M3U8_KEY, enabled ? 'true' : 'false');
-    },
-
-    setGenerateCUE(enabled) {
-        localStorage.setItem(this.CUE_KEY, enabled ? 'true' : 'false');
-    },
-
-    setGenerateNFO(enabled) {
-        localStorage.setItem(this.NFO_KEY, enabled ? 'true' : 'false');
-    },
-
-    setGenerateJSON(enabled) {
-        localStorage.setItem(this.JSON_KEY, enabled ? 'true' : 'false');
-    },
-
-    setUseRelativePaths(enabled) {
-        localStorage.setItem(this.RELATIVE_PATHS_KEY, enabled ? 'true' : 'false');
-    },
-
-    setSeparateDiscsInZip(enabled) {
-        localStorage.setItem(this.SEPARATE_DISCS_KEY, enabled ? 'true' : 'false');
-    },
-
-    shouldIncludeCover() {
-        try {
-            const val = localStorage.getItem(this.INCLUDE_COVER_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    setIncludeCover(enabled) {
-        localStorage.setItem(this.INCLUDE_COVER_KEY, enabled ? 'true' : 'false');
     },
 };
 
@@ -2548,23 +2394,6 @@ export const autoplaySettings = {
     },
 };
 
-export const analyticsSettings = {
-    ENABLED_KEY: 'analytics-enabled',
-
-    isEnabled() {
-        try {
-            const val = localStorage.getItem(this.ENABLED_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    setEnabled(enabled) {
-        localStorage.setItem(this.ENABLED_KEY, enabled ? 'true' : 'false');
-    },
-};
-
 export const sidebarSectionSettings = {
     SHOW_HOME_KEY: 'sidebar-show-home',
     SHOW_LIBRARY_KEY: 'sidebar-show-library',
@@ -2575,7 +2404,6 @@ export const sidebarSectionSettings = {
     SHOW_ABOUT_KEY: 'sidebar-show-about',
     SHOW_DISCORD_KEY: 'sidebar-show-discord',
     SHOW_GITHUB_KEY: 'sidebar-show-github',
-    SHOW_PARTY_KEY: 'sidebar-show-party',
     ORDER_KEY: 'sidebar-menu-order',
     DEFAULT_ORDER: [
         'sidebar-nav-home',
@@ -2585,9 +2413,7 @@ export const sidebarSectionSettings = {
         'sidebar-nav-donate',
         'sidebar-nav-settings',
         'sidebar-nav-about-bottom',
-        'sidebar-nav-mobile',
         'sidebar-nav-discordbtn',
-        'sidebar-nav-party',
         'sidebar-nav-githubbtn',
     ],
 
@@ -2713,19 +2539,6 @@ export const sidebarSectionSettings = {
         localStorage.setItem(this.SHOW_GITHUB_KEY, enabled ? 'true' : 'false');
     },
 
-    shouldShowParty() {
-        try {
-            const val = localStorage.getItem(this.SHOW_PARTY_KEY);
-            return val === null ? true : val === 'true';
-        } catch {
-            return true;
-        }
-    },
-
-    setShowParty(enabled) {
-        localStorage.setItem(this.SHOW_PARTY_KEY, enabled ? 'true' : 'false');
-    },
-
     normalizeOrder(order) {
         const baseOrder = this.DEFAULT_ORDER;
         const safeOrder = Array.isArray(order) ? order.filter((id) => baseOrder.includes(id)) : [];
@@ -2738,13 +2551,7 @@ export const sidebarSectionSettings = {
         try {
             const stored = localStorage.getItem(this.ORDER_KEY);
             if (stored) {
-                let order = JSON.parse(stored);
-                if (Array.isArray(order) && !order.includes('sidebar-nav-mobile')) {
-                    const aboutIndex = order.indexOf('sidebar-nav-about-bottom');
-                    if (aboutIndex !== -1) {
-                        order.splice(aboutIndex + 1, 0, 'sidebar-nav-mobile');
-                    }
-                }
+                const order = JSON.parse(stored);
                 return this.normalizeOrder(order);
             }
         } catch {
@@ -2791,9 +2598,7 @@ export const sidebarSectionSettings = {
             { id: 'sidebar-nav-donate', check: this.shouldShowDonate() },
             { id: 'sidebar-nav-settings', check: this.shouldShowSettings() },
             { id: 'sidebar-nav-about-bottom', check: this.shouldShowAbout() },
-            { id: 'sidebar-nav-mobile', check: true },
             { id: 'sidebar-nav-discordbtn', check: this.shouldShowDiscord() },
-            { id: 'sidebar-nav-party', check: this.shouldShowParty() },
             { id: 'sidebar-nav-githubbtn', check: this.shouldShowGithub() },
         ];
 

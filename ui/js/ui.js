@@ -1,5 +1,5 @@
 //js/ui.js
-import { showNotification } from './downloads.js';
+import { showNotification } from './notifications.js';
 import {
     formatTime,
     createPlaceholder,
@@ -33,10 +33,6 @@ import {
 } from './storage.js';
 import { db } from './db.js';
 import { getVibrantColorFromImage } from './vibrant-color.js';
-import { syncManager } from './accounts/pocketbase.js';
-import { authManager } from './accounts/auth.js';
-import { AUTH_BASE_URL } from './accounts/config.js';
-import { areListeningPartiesDisabled, partyManager } from './listening-party.js';
 import { Visualizer } from './visualizer.js';
 import { audioContextManager } from './audio-context.js';
 import { navigate } from './router.js';
@@ -69,7 +65,6 @@ fontSettings.applyFontSize();
 
 import {
     SVG_PLAY,
-    SVG_DOWNLOAD,
     SVG_MENU,
     SVG_HEART,
     SVG_VOLUME,
@@ -2226,7 +2221,6 @@ export class UIRenderer {
         const totalDurationEl = document.getElementById('fs-total-duration');
         const fsLikeBtn = document.getElementById('fs-like-btn');
         const fsAddPlaylistBtn = document.getElementById('fs-add-playlist-btn');
-        const fsDownloadBtn = document.getElementById('fs-download-btn');
         const fsQueueBtn = document.getElementById('fs-queue-btn');
         const artistEl = document.getElementById('fullscreen-track-artist');
         const albumEl = document.getElementById('fullscreen-track-album');
@@ -2420,9 +2414,6 @@ export class UIRenderer {
         if (fsAddPlaylistBtn) {
             fsAddPlaylistBtn.onclick = () => document.getElementById('now-playing-add-playlist-btn')?.click();
         }
-        if (fsDownloadBtn) {
-            fsDownloadBtn.onclick = () => document.getElementById('download-current-btn')?.click();
-        }
         if (fsQueueBtn) {
             fsQueueBtn.onclick = () => {
                 document.getElementById('queue-btn')?.click();
@@ -2601,46 +2592,6 @@ export class UIRenderer {
             this.setPageBackground(null);
             await this.updateGlobalTheme();
         }
-
-        const downloadsdisabled = true;
-        if (downloadsdisabled == true) {
-            if (pageId === 'download') {
-                const maintenanceModal = document.getElementById('maintenance-modal');
-                const maintenanceHomeBtn = document.getElementById('maintenance-home-btn');
-                if (maintenanceModal) {
-                    maintenanceModal.classList.add('active');
-                    if (maintenanceHomeBtn) {
-                        maintenanceHomeBtn.onclick = () => {
-                            maintenanceModal.classList.remove('active');
-                            navigate('/');
-                        };
-                    }
-                }
-            } else {
-                const maintenanceModal = document.getElementById('maintenance-modal');
-                if (maintenanceModal) {
-                    maintenanceModal.classList.remove('active');
-                }
-            }
-        }
-        if (pageId === 'settings') {
-            this.renderApiSettings();
-            const savedTabName = settingsUiState.getActiveTab();
-            const savedTab = document.querySelector(`.settings-tab[data-tab="${savedTabName}"]`);
-            if (savedTab) {
-                document.querySelectorAll('.settings-tab').forEach((t) => t.classList.remove('active'));
-                document.querySelectorAll('.settings-tab-content').forEach((c) => c.classList.remove('active'));
-                savedTab.classList.add('active');
-                document.getElementById(`settings-tab-${savedTabName}`)?.classList.add('active');
-            }
-        } else {
-            document.querySelectorAll('.settings-tab').forEach((t) => t.classList.remove('active'));
-            document.querySelectorAll('.settings-tab-content').forEach((c) => c.classList.remove('active'));
-        }
-
-        if (pageId === 'donate') {
-            this.loadDonateGoal();
-        }
     }
 
     setupCryptoCopy() {
@@ -2706,130 +2657,6 @@ export class UIRenderer {
         }
     }
 
-    async renderPartiesPage() {
-        await this.showPage('parties');
-        const authRequired = document.getElementById('parties-auth-required');
-        const hostControls = document.getElementById('parties-host-controls');
-        const loginBtn = document.getElementById('parties-login-btn');
-        const disabledNotice = document.getElementById('parties-disabled-notice');
-        const activeParty = document.getElementById('parties-active-party');
-        const returnBtn = document.getElementById('parties-return-btn');
-
-        const authServerAvailable = await this.checkPartiesServerAvailable();
-        if (areListeningPartiesDisabled() || !authServerAvailable) {
-            if (disabledNotice) disabledNotice.style.display = 'block';
-            if (hostControls) hostControls.style.display = 'none';
-            if (authRequired) authRequired.style.display = 'none';
-            if (activeParty) activeParty.style.display = 'none';
-            return;
-        }
-
-        if (disabledNotice) disabledNotice.style.display = 'none';
-        if (partyManager.currentParty?.id) {
-            if (activeParty) activeParty.style.display = 'block';
-            if (hostControls) hostControls.style.display = 'none';
-            if (authRequired) authRequired.style.display = 'none';
-            if (returnBtn) returnBtn.onclick = () => navigate(`/party/${partyManager.currentParty.id}`);
-            return;
-        }
-
-        if (activeParty) activeParty.style.display = 'none';
-        if (hostControls) hostControls.style.display = 'block';
-        if (authManager.user) {
-            if (authRequired) authRequired.style.display = 'none';
-        } else {
-            if (authRequired) authRequired.style.display = 'block';
-            if (loginBtn) loginBtn.onclick = () => navigate('/account');
-        }
-    }
-
-    async checkPartiesServerAvailable() {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-        try {
-            const response = await fetch(`${AUTH_BASE_URL}/health`, {
-                credentials: 'include',
-                cache: 'no-store',
-                signal: controller.signal,
-            });
-            return response.ok;
-        } catch (_e) {
-            return false;
-        } finally {
-            clearTimeout(timeout);
-        }
-    }
-
-    async renderResetPasswordPage() {
-        await this.showPage('reset-password');
-        const form = document.getElementById('reset-password-form');
-        const errorEl = document.getElementById('reset-password-error');
-        const successEl = document.getElementById('reset-password-success');
-        const btn = document.getElementById('reset-password-submit-btn');
-        const btnText = document.getElementById('reset-password-btn-text');
-        const spinner = document.getElementById('reset-password-btn-spinner');
-        const passwordInput = document.getElementById('reset-password-input');
-        const confirmInput = document.getElementById('reset-password-confirm');
-
-        if (!form) return;
-
-        const params = new URLSearchParams(window.location.search);
-        const token = params.get('token');
-
-        if (!token) {
-            errorEl.textContent = 'Invalid or missing password reset link.';
-            errorEl.style.display = 'block';
-            form.style.display = 'none';
-            return;
-        }
-
-        form.onsubmit = async (e) => {
-            e.preventDefault();
-            errorEl.style.display = 'none';
-            successEl.style.display = 'none';
-
-            const password = passwordInput.value;
-            const confirm = confirmInput.value;
-
-            if (password !== confirm) {
-                errorEl.textContent = 'Passwords do not match.';
-                errorEl.style.display = 'block';
-                return;
-            }
-
-            try {
-                btn.disabled = true;
-                btnText.style.display = 'none';
-                spinner.style.display = 'block';
-
-                await authManager.resetPassword(token, password, confirm);
-
-                successEl.textContent = 'Password reset successfully. Opening login...';
-                successEl.style.display = 'block';
-                form.style.display = 'none';
-
-                setTimeout(() => {
-                    const authModal = document.getElementById('email-auth-modal');
-                    if (authModal) {
-                        authModal.classList.add('active');
-                    }
-                }, 2000);
-            } catch (error) {
-                errorEl.textContent = error.message || 'Failed to reset password. Please try again.';
-                errorEl.style.display = 'block';
-            } finally {
-                btn.disabled = false;
-                btnText.style.display = 'inline';
-                spinner.style.display = 'none';
-            }
-        };
-    }
-
-    async renderPartyDetailPage(id) {
-        await this.showPage('party-detail');
-        await partyManager.joinParty(id);
-    }
-
     async renderLibraryPage() {
         await this.showPage('library');
 
@@ -2843,7 +2670,6 @@ export class UIRenderer {
 
         const likedTracks = await db.getFavorites('track');
         const shuffleBtn = document.getElementById('shuffle-liked-tracks-btn');
-        const downloadBtn = document.getElementById('download-liked-tracks-btn');
         const likedToolbar = document.getElementById('library-liked-tracks-toolbar');
         const viewListBtn = document.getElementById('library-liked-tracks-view-list');
         const viewGridBtn = document.getElementById('library-liked-tracks-view-grid');
@@ -2852,7 +2678,6 @@ export class UIRenderer {
         if (likedTracks.length) {
             if (likedToolbar) likedToolbar.style.display = 'flex';
             if (shuffleBtn) shuffleBtn.style.display = 'flex';
-            if (downloadBtn) downloadBtn.style.display = 'flex';
             if (viewListBtn) viewListBtn.classList.toggle('active', likedViewLayout === 'list');
             if (viewGridBtn) viewGridBtn.classList.toggle('active', likedViewLayout === 'grid');
 
@@ -2877,7 +2702,6 @@ export class UIRenderer {
         } else {
             if (likedToolbar) likedToolbar.style.display = 'none';
             if (shuffleBtn) shuffleBtn.style.display = 'none';
-            if (downloadBtn) downloadBtn.style.display = 'none';
             tracksContainer.classList.remove('card-grid');
             tracksContainer.classList.add('track-list');
             tracksContainer.innerHTML = createPlaceholder('No liked tracks yet.');
@@ -4655,15 +4479,6 @@ export class UIRenderer {
                                 const subtitle = item.username ? `by ${item.username}` : null;
                                 cardsHTML.push(this.createUserPlaylistCardHTML(playlist, subtitle));
                                 itemsToStore.push({ el: null, data: playlist, type: 'user-playlist' });
-                            } else {
-                                const playlist = await syncManager.getPublicPlaylist(item.id);
-                                if (playlist) {
-                                    playlist._lazy = cardsHTML.length >= 6;
-                                    playlist._isEditorsPick = true;
-                                    const subtitle = item.username ? `by ${item.username}` : null;
-                                    cardsHTML.push(this.createUserPlaylistCardHTML(playlist, subtitle));
-                                    itemsToStore.push({ el: null, data: playlist, type: 'user-playlist' });
-                                }
                             }
                         }
                     } catch (e) {
@@ -4993,14 +4808,12 @@ export class UIRenderer {
         const albumsContainer = document.getElementById('search-albums-container');
         const playlistsContainer = document.getElementById('search-playlists-container');
         const communityPlaylistsContainer = document.getElementById('search-community-playlists-container');
-        const podcastsContainer = document.getElementById('search-podcasts-container');
 
         tracksContainer.innerHTML = this.createSkeletonTracks(8, true);
         artistsContainer.innerHTML = this.createSkeletonCards(6, true);
         albumsContainer.innerHTML = this.createSkeletonCards(6, false);
         playlistsContainer.innerHTML = this.createSkeletonCards(6, false);
         communityPlaylistsContainer.innerHTML = this.createSkeletonCards(6, false);
-        podcastsContainer.innerHTML = this.createSkeletonCards(6, true);
 
         if (this.searchAbortController) {
             this.searchAbortController.abort();
@@ -5020,11 +4833,7 @@ export class UIRenderer {
             let finalAlbums = (results.albums && results.albums.items) || [];
             let finalPlaylists = (results.playlists && results.playlists.items) || [];
 
-            if (
-                finalArtists.length === 0 &&
-                finalTracks.length > 0 &&
-                !finalTracks.some((track) => track.provider === 'apple')
-            ) {
+            if (finalArtists.length === 0 && finalTracks.length > 0) {
                 const artistMap = new Map();
                 finalTracks.forEach((track) => {
                     if (track.artist && !artistMap.has(track.artist.id)) {
@@ -5041,11 +4850,7 @@ export class UIRenderer {
                 finalArtists = Array.from(artistMap.values());
             }
 
-            if (
-                finalAlbums.length === 0 &&
-                finalTracks.length > 0 &&
-                !finalTracks.some((track) => track.provider === 'apple')
-            ) {
+            if (finalAlbums.length === 0 && finalTracks.length > 0) {
                 const albumMap = new Map();
                 finalTracks.forEach((track) => {
                     if (track.album && !albumMap.has(track.album.id)) {
@@ -5080,7 +4885,6 @@ export class UIRenderer {
             artistsContainer.innerHTML = errorMsg;
             albumsContainer.innerHTML = errorMsg;
             playlistsContainer.innerHTML = errorMsg;
-            podcastsContainer.innerHTML = errorMsg;
         }
     }
 
@@ -5182,9 +4986,6 @@ export class UIRenderer {
                 case 'community-playlists':
                     await this._renderSearchCommunityPlaylists(state);
                     break;
-                case 'podcasts':
-                    await this.renderPodcastSearchResults(state.query);
-                    break;
             }
         } catch (error) {
             if (error.name === 'AbortError') return;
@@ -5228,11 +5029,7 @@ export class UIRenderer {
 
     async _renderSearchArtists(state) {
         const artistsContainer = document.getElementById('search-artists-container');
-        if (
-            !state.artistsEnriched &&
-            state.artists.length &&
-            !state.artists.some((artist) => artist.provider === 'apple')
-        ) {
+        if (!state.artistsEnriched && state.artists.length) {
             try {
                 state.artists = await this.api.tidalAPI.enrichArtistsWithPicture(state.artists);
             } catch (e) {
@@ -5426,8 +5223,6 @@ export class UIRenderer {
         const tracklistContainer = document.getElementById('album-detail-tracklist');
         const playBtn = document.getElementById('play-album-btn');
         if (playBtn) playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play Album</span>`;
-        const dlBtn = document.getElementById('download-album-btn');
-        if (dlBtn) dlBtn.innerHTML = `${SVG_DOWNLOAD(20)}<span>Download Album</span>`;
         const mixBtn = document.getElementById('album-mix-btn');
         if (mixBtn) mixBtn.style.display = 'none';
 
@@ -5466,7 +5261,6 @@ export class UIRenderer {
                 rateUsersEl.textContent = '';
                 tracklistContainer.innerHTML = '';
                 if (playBtn) playBtn.style.display = 'none';
-                if (dlBtn) dlBtn.style.display = 'none';
                 document.getElementById('page-album').innerHTML =
                     '<p style="padding: 2rem; color: var(--muted-foreground);">This content is unavailable due to a DMCA notice.</p>';
                 return;
@@ -5882,7 +5676,6 @@ export class UIRenderer {
                                         const playlistId = playlistMatch[1];
                                         await db.addTrackToPlaylist(playlistId, trackData);
                                         const updatedPlaylist = await db.getPlaylist(playlistId);
-                                        await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
 
                                         const tracklistContainer = document.getElementById('playlist-detail-tracklist');
                                         if (tracklistContainer && updatedPlaylist.tracks) {
@@ -5900,8 +5693,7 @@ export class UIRenderer {
                                                 this.enableTrackReordering(
                                                     tracklistContainer,
                                                     updatedPlaylist.tracks,
-                                                    playlistId,
-                                                    syncManager
+                                                    playlistId
                                                 );
                                             }
 
@@ -5956,8 +5748,6 @@ export class UIRenderer {
         const tracklistContainer = document.getElementById('playlist-detail-tracklist');
         const playBtn = document.getElementById('play-playlist-btn');
         if (playBtn) playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play</span>`;
-        const dlBtn = document.getElementById('download-playlist-btn');
-        if (dlBtn) dlBtn.innerHTML = `${SVG_DOWNLOAD(20)}<span>Download</span>`;
         const addPlaylistBtn = document.getElementById('add-playlist-to-playlist-btn');
 
         imageEl.src = '';
@@ -5983,15 +5773,6 @@ export class UIRenderer {
             if (source === 'user' || (!source && isUUID)) {
                 ownedPlaylist = await db.getPlaylist(playlistId);
                 playlistData = ownedPlaylist;
-
-                // If not in local DB, check if it's a public Pocketbase playlist
-                if (!playlistData) {
-                    try {
-                        playlistData = await syncManager.getPublicPlaylist(playlistId);
-                    } catch (e) {
-                        console.warn('Failed to check public pocketbase playlists:', e);
-                    }
-                }
             }
 
             if (playlistData) {
@@ -6082,7 +5863,7 @@ export class UIRenderer {
 
                         // Only enable drag-and-drop reordering in custom sort mode
                         if (currentSort === 'custom') {
-                            this.enableTrackReordering(container, currentTracks, playlistId, syncManager);
+                            this.enableTrackReordering(container, currentTracks, playlistId);
                         }
                     } else {
                         container.classList.remove('is-editable');
@@ -6324,8 +6105,6 @@ export class UIRenderer {
         const tracklistContainer = document.getElementById('mix-detail-tracklist');
         const playBtn = document.getElementById('play-mix-btn');
         if (playBtn) playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play</span>`;
-        const dlBtn = document.getElementById('download-mix-btn');
-        if (dlBtn) dlBtn.innerHTML = `${SVG_DOWNLOAD(20)}<span>Download</span>`;
 
         // Skeleton loading
         imageEl.src = '';
@@ -6483,8 +6262,6 @@ export class UIRenderer {
         const similarSection = document.getElementById('artist-section-similar');
         const inLibraryContainer = document.getElementById('artist-detail-in-library');
         const inLibrarySection = document.getElementById('artist-section-in-library');
-        const dlBtn = document.getElementById('download-discography-btn');
-        if (dlBtn) dlBtn.innerHTML = `${SVG_DOWNLOAD(20)}<span>Download Discography</span>`;
 
         imageEl.src = '';
         imageEl.style.backgroundColor = 'var(--muted)';
@@ -7262,7 +7039,6 @@ export class UIRenderer {
                     if (confirm('Clear all recently played tracks? This cannot be undone.')) {
                         try {
                             await db.clearHistory();
-                            await syncManager.clearHistory();
                             container.innerHTML = createPlaceholder("You haven't played any tracks yet.");
                             clearBtn.style.display = 'none';
                         } catch (err) {
@@ -7446,57 +7222,21 @@ export class UIRenderer {
             fragment.appendChild(shareBtn);
         }
 
-        // Insert buttons in the correct order: Play, Shuffle, Download, Sort, Like, Edit/Delete/Share
-        const dlBtn = actionsDiv.querySelector('#download-playlist-btn');
+        // Order: Play, Shuffle, Sort, Like, then Edit/Delete/Share.
         const likeBtn = actionsDiv.querySelector('#like-playlist-btn');
-
-        if (dlBtn) {
-            // We want Shuffle first, then Edit/Delete/Share.
-            // But Download is usually first or second.
-            // In renderPlaylistPage: Play, Download, Like.
-            // We want Shuffle after Play? Or after Download?
-            // Previous code: actionsDiv.insertBefore(shuffleBtn, dlBtn); => Shuffle before Download.
-            // Then appended others.
-
-            // Let's just append everything for now to keep it simple, or insert Shuffle specifically.
-            // The Play button is static. Download is static.
-
-            // If we want Shuffle before Download:
-            // fragment has Shuffle, Edit, Delete, Share.
-            // If we insert fragment before Download, all go before Download.
-            // That might change the order.
-            // Previous order: Shuffle (before Download), then Edit/Delete/Share (appended = after Like).
-
-            // Let's split fragment?
-            // Or just use append for all.
-            // The user didn't complain about order, but consistency is good.
-            // "Fix popup buttons" was the request.
-
-            // Let's stick to appending for now to minimize visual layout shifts from previous (where Edit/Delete were appended).
-            // Shuffle was inserted before Download.
-            actionsDiv.insertBefore(shuffleBtn, dlBtn);
-            // Insert Sort after Download, before Like
-            if (sortBtn && likeBtn) {
-                actionsDiv.insertBefore(sortBtn, likeBtn);
-            } else if (sortBtn) {
-                actionsDiv.appendChild(sortBtn);
-            }
-
-            // Append Edit/Delete/Share buttons after Like
-            while (fragment.firstChild) {
-                actionsDiv.appendChild(fragment.firstChild);
-            }
+        if (likeBtn) {
+            actionsDiv.insertBefore(shuffleBtn, likeBtn);
+            if (sortBtn) actionsDiv.insertBefore(sortBtn, likeBtn);
         } else {
-            // If no Download button, just append everything
             actionsDiv.appendChild(shuffleBtn);
             if (sortBtn) actionsDiv.appendChild(sortBtn);
-            while (fragment.firstChild) {
-                actionsDiv.appendChild(fragment.firstChild);
-            }
+        }
+        while (fragment.firstChild) {
+            actionsDiv.appendChild(fragment.firstChild);
         }
     }
 
-    enableTrackReordering(container, tracks, playlistId, syncManager) {
+    enableTrackReordering(container, tracks, playlistId) {
         // Clone to remove old listeners
         const newContainer = container.cloneNode(true);
         if (container.parentNode) {
@@ -7570,8 +7310,7 @@ export class UIRenderer {
                 tracks.splice(0, tracks.length, ...newTracks);
 
                 // Save to DB
-                const updatedPlaylist = await db.updatePlaylistTracks(playlistId, newTracks);
-                syncManager.syncUserPlaylist(updatedPlaylist, 'update');
+                await db.updatePlaylistTracks(playlistId, newTracks);
 
                 draggedElement = null;
                 draggedIndex = -1;
@@ -7913,209 +7652,5 @@ export class UIRenderer {
             titleEl.textContent = 'Track not found';
             artistEl.innerHTML = '';
         }
-    }
-
-    async renderPodcastsBrowsePage() {
-        await this.showPage('podcasts-browse');
-        const trendingContainer = document.getElementById('podcasts-trending-container');
-        const recentContainer = document.getElementById('podcasts-recent-container');
-        trendingContainer.innerHTML = this.createSkeletonCards(12, true);
-        recentContainer.innerHTML = this.createSkeletonCards(12, true);
-
-        try {
-            const { podcastsAPI } = await import('./podcasts-api.js');
-            const trendingResult = await podcastsAPI.getTrendingPodcasts({ max: 24 });
-            if (trendingResult.items.length > 0) {
-                trendingContainer.innerHTML = trendingResult.items
-                    .map((podcast) => this.createPodcastCardHTML(podcast))
-                    .join('');
-                this.attachPodcastCardListeners(trendingContainer, trendingResult.items);
-            } else {
-                trendingContainer.innerHTML = createPlaceholder('No trending podcasts found.');
-            }
-        } catch (error) {
-            console.error('Failed to load trending podcasts:', error);
-            trendingContainer.innerHTML = createPlaceholder('Failed to load trending podcasts.');
-        }
-
-        document.title = 'Podcasts - Monochrome Music';
-    }
-
-    cleanupPodcastState() {
-        this.podcastState = null;
-    }
-
-    async renderPodcastPage(podcastId) {
-        this.cleanupPodcastState();
-        await this.showPage('podcasts');
-
-        this.podcastState = {
-            id: podcastId,
-            episodes: [],
-            offset: 0,
-            hasMore: true,
-            isLoading: false,
-        };
-
-        const nameEl = document.getElementById('podcasts-detail-name');
-        const metaEl = document.getElementById('podcasts-detail-meta');
-        const imageEl = document.getElementById('podcasts-detail-image');
-        const episodesContainer = document.getElementById('podcasts-episodes-container');
-
-        nameEl.textContent = 'Loading...';
-        metaEl.textContent = '';
-        episodesContainer.innerHTML = this.createSkeletonTracks(8, true);
-
-        try {
-            const { podcastsAPI } = await import('./podcasts-api.js');
-            const podcastResult = await podcastsAPI.getPodcastById(podcastId);
-
-            if (podcastResult) {
-                nameEl.textContent = podcastResult.title;
-                metaEl.textContent = `${podcastResult.episodeCount} episodes • ${podcastResult.author}`;
-                if (podcastResult.image) {
-                    imageEl.src = podcastResult.image;
-                    this.setPageBackground(podcastResult.image);
-                }
-
-                this.podcastState.podcastTitle = podcastResult.title;
-                const _playBtn = document.getElementById('play-podcasts-btn');
-            } else {
-                this.podcastState.podcastTitle = 'Unknown Podcast';
-            }
-
-            document.title = `${podcastResult?.title || 'Podcast'} - Monochrome Music`;
-
-            episodesContainer.innerHTML = '';
-            await this.loadAllPodcastEpisodes();
-        } catch (error) {
-            console.error('Failed to load podcast:', error);
-            nameEl.textContent = 'Podcast not found';
-            episodesContainer.innerHTML = createPlaceholder('Failed to load podcast.');
-        }
-    }
-
-    async loadAllPodcastEpisodes() {
-        this.podcastState.isLoading = true;
-        const episodesContainer = document.getElementById('podcasts-episodes-container');
-        episodesContainer.innerHTML = this.createSkeletonTracks(8, true);
-
-        try {
-            const { podcastsAPI } = await import('./podcasts-api.js');
-            const result = await podcastsAPI.getPodcastEpisodes(this.podcastState.id, {
-                max: 10000,
-            });
-
-            this.podcastState.episodes = result.items;
-            this.podcastState.hasMore = false;
-
-            const podcastTitle = this.podcastState.podcastTitle || 'Unknown Podcast';
-            const tracks = result.items.map((ep) => this.transformPodcastEpisodeToTrack(ep, podcastTitle));
-            await this.renderListWithTracks(episodesContainer, tracks, true);
-
-            const playBtn = document.getElementById('play-podcasts-btn');
-            if (playBtn && result.items.length > 0) {
-                playBtn.onclick = () => {
-                    const tracksToPlay = this.podcastState.episodes.map((ep) =>
-                        this.transformPodcastEpisodeToTrack(ep, podcastTitle)
-                    );
-                    if (this.player) {
-                        this.player.setQueue(tracksToPlay, 0);
-                        this.player.playTrackFromQueue();
-                    }
-                };
-            }
-        } catch (error) {
-            console.error('Failed to load podcast episodes:', error);
-            episodesContainer.innerHTML = createPlaceholder('Failed to load episodes.');
-        }
-
-        this.podcastState.isLoading = false;
-    }
-
-    async renderPodcastSearchResults(query) {
-        const podcastsContainer = document.getElementById('search-podcasts-container');
-        podcastsContainer.innerHTML = this.createSkeletonCards(12, true);
-
-        try {
-            const { podcastsAPI } = await import('./podcasts-api.js');
-            const result = await podcastsAPI.searchPodcasts(query, { max: 20 });
-
-            if (result.items.length > 0) {
-                podcastsContainer.innerHTML = result.items
-                    .map((podcast) => this.createPodcastCardHTML(podcast))
-                    .join('');
-                this.attachPodcastCardListeners(podcastsContainer, result.items);
-            } else {
-                podcastsContainer.innerHTML = createPlaceholder('No podcasts found.');
-            }
-        } catch (error) {
-            console.error('Podcast search failed:', error);
-            podcastsContainer.innerHTML = createPlaceholder('Failed to search podcasts.');
-        }
-    }
-
-    createPodcastCardHTML(podcast) {
-        const title = escapeHtml(podcast.title || 'Unknown Podcast');
-        const author = escapeHtml(podcast.author || '');
-        const image = podcast.image || '';
-        const description = escapeHtml((podcast.description || '').substring(0, 120));
-        const episodeCount = podcast.episodeCount || 0;
-
-        return `
-            <div class="card" data-podcast-id="${podcast.id}">
-                <div class="card-image-container">
-                    <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${image}" alt="${title}" loading="lazy" onerror="this.style.display='none'" />
-                    <div class="card-image-placeholder" ${image ? 'style="display:none"' : ''}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23333" width="100" height="100"/><circle cx="50" cy="45" r="20" fill="%23666"/><rect x="35" y="70" width="30" height="15" rx="3" fill="%23666"/></svg>
-                    </div>
-                </div>
-                <div class="card-info">
-                    <h3 class="card-title">${title}</h3>
-                    <p class="card-subtitle">${author}</p>
-                    <p class="card-description">${description}${podcast.description?.length > 120 ? '...' : ''}</p>
-                    <span class="card-meta">${episodeCount} episodes</span>
-                </div>
-            </div>
-        `;
-    }
-
-    attachPodcastCardListeners(container, podcasts) {
-        const cards = container.querySelectorAll('.card[data-podcast-id]');
-        cards.forEach((card) => {
-            const podcastId = card.dataset.podcastId;
-            const podcast = podcasts.find((p) => p.id === podcastId);
-            if (podcast) {
-                card.addEventListener('click', () => {
-                    navigate(`/podcasts/${podcastId}`);
-                });
-            }
-        });
-    }
-
-    transformPodcastEpisodeToTrack(episode, podcastTitle = 'Unknown Podcast') {
-        return {
-            id: `podcast_${episode.id}`,
-            title: episode.title,
-            artist: { id: null, name: podcastTitle },
-            artists: [{ id: null, name: podcastTitle }],
-            album: {
-                id: null,
-                title: podcastTitle,
-                cover: episode.image || episode.feedImage || '',
-            },
-            duration: episode.duration,
-            explicit: episode.explicit,
-            dateAdded: episode.datePublished,
-            isPodcast: true,
-            enclosureUrl: episode.enclosureUrl,
-            enclosureType: episode.enclosureType,
-            enclosureLength: episode.enclosureLength,
-            episodeNumber: episode.episode,
-            episodeType: episode.episodeType,
-            season: episode.season,
-            description: episode.description,
-            podcastEpisode: episode,
-        };
     }
 }

@@ -188,16 +188,6 @@ class CommandPalette {
                 },
             },
             {
-                id: 'nav-download',
-                group: 'Navigation',
-                icon: 'download',
-                label: 'Go to Download',
-                keywords: ['download', 'desktop', 'app'],
-                action: () => {
-                    navigate('/download');
-                },
-            },
-            {
                 id: 'nav-donate',
                 group: 'Navigation',
                 icon: 'handHeart',
@@ -310,16 +300,6 @@ class CommandPalette {
                     document.querySelector('.now-playing-bar .like-btn')?.click();
                 },
             },
-            {
-                id: 'download-current',
-                group: 'Now Playing',
-                icon: 'download',
-                label: 'Download Current Track',
-                keywords: ['download', 'save', 'current'],
-                action: () => {
-                    document.querySelector('.now-playing-bar .download-btn')?.click();
-                },
-            },
 
             {
                 id: 'queue-open',
@@ -350,14 +330,6 @@ class CommandPalette {
                 label: 'Like All in Queue',
                 keywords: ['like', 'all', 'queue', 'heart', 'favorite'],
                 action: () => this.likeAllInQueue(),
-            },
-            {
-                id: 'queue-download',
-                group: 'Queue',
-                icon: 'download',
-                label: 'Download Queue',
-                keywords: ['download', 'queue', 'save', 'all'],
-                action: () => this.downloadQueue(),
             },
 
             {
@@ -519,16 +491,6 @@ class CommandPalette {
                 keywords: ['theme', 'latte', 'catppuccin', 'light'],
                 action: () => this.setTheme('latte'),
             },
-            {
-                id: 'theme-store',
-                group: 'Theme',
-                icon: 'store',
-                label: 'Open Theme Store',
-                keywords: ['theme', 'store', 'browse', 'community', 'custom'],
-                action: () => {
-                    document.getElementById('open-theme-store')?.click();
-                },
-            },
 
             {
                 id: 'quality-auto',
@@ -654,49 +616,6 @@ class CommandPalette {
                 keywords: ['setting', 'find', 'search', 'preference', 'option', 'configure'],
                 keepOpen: true,
                 action: () => this.enterSettingsMode(),
-            },
-
-            {
-                id: 'acc-profile',
-                group: 'Account',
-                icon: 'user',
-                label: 'View Profile',
-                keywords: ['profile', 'account', 'user', 'me'],
-                action: () => {
-                    document.querySelector('.user-avatar-btn')?.click();
-                },
-            },
-            {
-                id: 'acc-edit-profile',
-                group: 'Account',
-                icon: 'pencil',
-                label: 'Edit Profile',
-                keywords: ['edit', 'profile', 'username', 'avatar', 'display name'],
-                action: async () => {
-                    const { openEditProfile } = await import('./profile.js');
-                    await openEditProfile();
-                },
-            },
-            {
-                id: 'acc-sign-out',
-                group: 'Account',
-                icon: 'logOut',
-                label: 'Sign Out',
-                keywords: ['sign out', 'log out', 'logout', 'disconnect'],
-                action: async () => {
-                    const { authManager } = await import('./accounts/auth.js');
-                    await authManager.signOut();
-                },
-            },
-            {
-                id: 'acc-sign-in',
-                group: 'Account',
-                icon: 'logIn',
-                label: 'Sign In',
-                keywords: ['sign in', 'log in', 'login', 'account', 'connect'],
-                action: () => {
-                    navigate('/account');
-                },
             },
         ];
     }
@@ -1218,13 +1137,6 @@ class CommandPalette {
             if (streamingSelect) streamingSelect.value = quality;
         }
 
-        const { downloadQualitySettings } = await import('./storage.js');
-        // Do not pass auto to download quality, resolve it to original fallback
-        const dlQuality = quality === 'auto' ? 'HI_RES_LOSSLESS' : quality;
-        downloadQualitySettings.setQuality(dlQuality);
-        const downloadSelect = document.getElementById('download-quality-setting');
-        if (downloadSelect) downloadSelect.value = dlQuality;
-
         await this.notify(`Quality set to ${qualityNames[quality] || quality}`);
     }
 
@@ -1261,22 +1173,6 @@ class CommandPalette {
         await this.notify(`Liked ${likedCount} new track(s)`);
     }
 
-    async downloadQueue() {
-        const player = Player.instance;
-        const ui = UIRenderer.instance;
-        if (!player || !ui) return;
-
-        const queue = player.getCurrentQueue();
-        if (queue.length === 0) {
-            await this.notify('Queue is empty');
-            return;
-        }
-
-        const { downloadTracks } = await import('./downloads.js');
-        const { downloadQualitySettings } = await import('./storage.js');
-        await downloadTracks(queue, ui.api, downloadQualitySettings.getQuality(), ui.lyricsManager);
-    }
-
     async createPlaylist() {
         const name = `New Playlist ${new Date().toLocaleDateString()}`;
         await db.createPlaylist(name);
@@ -1300,7 +1196,7 @@ class CommandPalette {
     }
 
     async notify(message) {
-        await import('./downloads.js').then((m) => m.showNotification(message)).catch(console.error);
+        await import('./notifications.js').then((m) => m.showNotification(message)).catch(console.error);
     }
 }
 

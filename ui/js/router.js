@@ -1,6 +1,5 @@
 //router.js
 import { getTrackArtists } from './utils.js';
-import { loadProfile } from './profile.js';
 
 export function navigate(path) {
     if (path === window.location.pathname) {
@@ -36,9 +35,6 @@ export function createRouter(ui) {
             if (p.startsWith('t/')) {
                 return { provider: 'tidal', id: p.slice(2) };
             }
-            if (p.startsWith('apple/')) {
-                return { provider: 'apple', id: p.slice(6) };
-            }
             if (p.startsWith('tracks/')) {
                 return { provider: 'tracks', id: p.slice(7) };
             }
@@ -52,12 +48,6 @@ export function createRouter(ui) {
         };
 
         switch (page) {
-            case 'parties':
-                await ui.renderPartiesPage();
-                break;
-            case 'party':
-                await ui.renderPartyDetailPage(param);
-                break;
             case 'search':
                 await ui.renderSearchPage(decodeURIComponent(param));
                 break;
@@ -116,26 +106,11 @@ export function createRouter(ui) {
                     await ui.renderUnreleasedPage();
                 }
                 break;
-            case 'podcasts':
-                if (param) {
-                    await ui.renderPodcastPage(param);
-                } else {
-                    await ui.renderPodcastsBrowsePage();
-                }
-                break;
             case 'home':
                 await ui.renderHomePage();
                 break;
-            case 'reset-password':
-                await ui.renderResetPasswordPage();
-                break;
             case 'donate':
                 ui.showPage('donate');
-                break;
-            case 'user':
-                if (param && param.startsWith('@') && !param.includes('/')) {
-                    await loadProfile(decodeURIComponent(param.slice(1)));
-                }
                 break;
             default:
                 ui.showPage(page);

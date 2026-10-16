@@ -9,15 +9,13 @@ import {
     positionMenu,
 } from './utils.js';
 import { sidePanelManager } from './side-panel.js';
-import { downloadQualitySettings, contentBlockingSettings } from './storage.js';
+import { contentBlockingSettings } from './storage.js';
 import { db } from './db.js';
-import { syncManager } from './accounts/pocketbase.js';
-import { showNotification, downloadTracks } from './downloads.js';
+import { showNotification } from './notifications.js';
 import {
     SVG_CLOSE,
     SVG_BIN,
     SVG_HEART,
-    SVG_DOWNLOAD,
     SVG_HEART_FILLED,
     SVG_SQUARE_PEN,
     SVG_TRASH,
@@ -87,7 +85,6 @@ export function initializeUIInteractions(player, api, ui) {
 
                 if (playlistId && folderId) {
                     const updatedFolder = await db.addPlaylistToFolder(folderId, playlistId);
-                    await syncManager.syncUserFolder(updatedFolder, 'update');
                     const subtitle = folderCard.querySelector('.card-subtitle');
                     if (subtitle) {
                         subtitle.textContent = `${updatedFolder.playlists.length} playlists`;
@@ -138,9 +135,6 @@ export function initializeUIInteractions(player, api, ui) {
         const showActionBtns = currentQueue.length > 0;
 
         container.innerHTML = `
-            <button id="download-queue-btn" class="btn-icon" title="Download Queue" style="display: ${showActionBtns ? 'flex' : 'none'}">
-                ${SVG_DOWNLOAD(20)}
-            </button>
             <button id="like-queue-btn" class="btn-icon" title="Add Queue to Liked" style="display: ${showActionBtns ? 'flex' : 'none'}">
                 ${SVG_HEART(20)}
             </button>
@@ -159,13 +153,6 @@ export function initializeUIInteractions(player, api, ui) {
             sidePanelManager.close();
         });
 
-        const downloadBtn = container.querySelector('#download-queue-btn');
-        if (downloadBtn) {
-            downloadBtn.addEventListener('click', async () => {
-                await downloadTracks(currentQueue, api, downloadQualitySettings.getQuality());
-            });
-        }
-
         const likeBtn = container.querySelector('#like-queue-btn');
         if (likeBtn) {
             likeBtn.addEventListener('click', async () => {
@@ -173,7 +160,6 @@ export function initializeUIInteractions(player, api, ui) {
                 for (const track of currentQueue) {
                     const wasAdded = await db.toggleFavorite('track', track);
                     if (wasAdded) {
-                        await syncManager.syncLibraryItem('track', track, true);
                         addedCount++;
                     }
                 }
@@ -241,9 +227,6 @@ export function initializeUIInteractions(player, api, ui) {
                                 await db.addTrackToPlaylist(playlistId, track);
                                 addedCount++;
                             }
-
-                            const updatedPlaylist = await db.getPlaylist(playlistId);
-                            await syncManager.syncUserPlaylist(updatedPlaylist, 'update');
 
                             showNotification(`Added ${addedCount} tracks to playlist: ${playlistName}`);
                         } catch (error) {
@@ -346,7 +329,6 @@ export function initializeUIInteractions(player, api, ui) {
                 const track = player.getCurrentQueue()[index];
                 if (track) {
                     const added = await db.toggleFavorite('track', track);
-                    await syncManager.syncLibraryItem('track', track, added);
 
                     likeBtn.classList.toggle('active', added);
                     likeBtn.innerHTML = added ? SVG_HEART_FILLED(20) : SVG_HEART(20);
@@ -558,8 +540,7 @@ export function initializeUIInteractions(player, api, ui) {
             const folderId = window.location.pathname.split('/')[2];
             if (playlistId && folderId) {
                 try {
-                    const updatedFolder = await db.addPlaylistToFolder(folderId, playlistId);
-                    await syncManager.syncUserFolder(updatedFolder, 'update');
+                    await db.addPlaylistToFolder(folderId, playlistId);
                     window.dispatchEvent(new HashChangeEvent('hashchange'));
                     showNotification('Playlist added to folder');
                 } catch (error) {

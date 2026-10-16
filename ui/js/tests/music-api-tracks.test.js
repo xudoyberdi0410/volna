@@ -62,36 +62,11 @@ describe('MusicAPI primary search and streaming integration', () => {
         };
 
         const searchSpy = vi.spyOn(api.tracksStreamerAPI, 'search').mockResolvedValueOnce(mockTracksResult);
-        const appleSearchSpy = vi.spyOn(api.appleMusicSearchAPI, 'search');
 
         const results = await api.search('Song From Tracks Streamer');
 
         expect(searchSpy).toHaveBeenCalledWith('Song From Tracks Streamer', {});
-        expect(appleSearchSpy).not.toHaveBeenCalled();
         expect(results.tracks.items[0].title).toBe('Song From Tracks Streamer');
-    });
-
-    it('falls back to Apple Music when tracksStreamerAPI search fails', async () => {
-        vi.spyOn(api.tracksStreamerAPI, 'search').mockRejectedValueOnce(new Error('Network error'));
-        const appleSearchSpy = vi.spyOn(api.appleMusicSearchAPI, 'search').mockResolvedValueOnce({
-            results: {
-                songs: {
-                    data: [
-                        {
-                            id: '999',
-                            type: 'songs',
-                            attributes: { name: 'Apple Song', artistName: 'Apple Artist' },
-                        },
-                    ],
-                },
-            },
-        });
-
-        const results = await api.search('Apple Song');
-
-        expect(appleSearchSpy).toHaveBeenCalled();
-        expect(results.tracks.items.length).toBe(1);
-        expect(results.tracks.items[0].title).toBe('Apple Song');
     });
 
     it('uses tracksStreamerAPI as primary streaming for any track', async () => {

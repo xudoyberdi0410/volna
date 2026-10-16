@@ -26,20 +26,22 @@ function applyBlurEffectsPreferenceToLyrics() {
 
 window.addEventListener('disable-blur-effects-changed', applyBlurEffectsPreferenceToLyrics);
 
+// am-lyrics is loaded once the page's images are in, so it does not compete
+// with them. Lazy covers below the fold may never load, so they are skipped
+// and the wait is capped (the same rule as the player's start-up).
 const loadAmLyrics = () => {
-    const images = Array.from(document.images).filter((img) => !img.complete);
-    if (images.length === 0) {
-        import('@uimaxbai/am-lyrics/am-lyrics.js').catch(console.error);
-    } else {
-        Promise.all(
-            images.map(
-                (img) =>
-                    new Promise((res) => {
-                        img.onload = img.onerror = res;
-                    })
-            )
-        ).then(() => import('@uimaxbai/am-lyrics/am-lyrics.js').catch(console.error));
-    }
+    const pending = Array.from(document.images).filter((img) => !img.complete && img.loading !== 'lazy');
+    const loaded = pending.map(
+        (img) =>
+            new Promise((res) => {
+                img.addEventListener('load', res, { once: true });
+                img.addEventListener('error', res, { once: true });
+            })
+    );
+    const capped = new Promise((res) => setTimeout(res, 3000));
+    void Promise.race([Promise.all(loaded), capped])
+        .then(() => import('@uimaxbai/am-lyrics/am-lyrics.js'))
+        .catch(console.error);
 };
 
 if (document.readyState === 'complete') {

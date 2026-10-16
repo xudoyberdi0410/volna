@@ -11,6 +11,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { db } from './db.js';
 import { showNotification } from './notifications.js';
+import { setBeforeAutoSkip } from './playback-failures.js';
 import { escapeHtml } from './utils.js';
 import {
     applyChoice,
@@ -229,6 +230,9 @@ class WaveController {
                 (e) => {
                     if (!(e.target instanceof HTMLMediaElement)) return;
                     for (const ev of this.tracker.switchTo(this.player.currentTrack)) this.send(ev);
+                    // Top up on every track change, not only once a track
+                    // plays: skipped or unplayable tracks never "start".
+                    if (type === 'loadstart' && this.active) void this.topUp();
                 },
                 true
             );
@@ -616,6 +620,8 @@ export async function initWave(player, api) {
         return null;
     }
     const wave = new WaveController(player, api);
+    // An unplayable wave track is skipped: make sure there is a next one.
+    setBeforeAutoSkip(() => (wave.active ? wave.topUp() : undefined));
     await wave.init();
     if (import.meta.env.DEV) window.volnaWave = wave;
     return wave;

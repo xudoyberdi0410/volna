@@ -27,7 +27,9 @@ export function showNotification(message, options = {}) {
 
     const isError =
         options.type === 'error' ||
-        /\b(error|failed|failure|could not|couldn't|cannot|unable|unavailable|not found)\b/i.test(String(message));
+        /\b(error|failed|failure|could not|couldn't|cannot|unable|unavailable|not found)\b/i.test(String(message)) ||
+        // \b does not work for Cyrillic.
+        /(не удалось|ошибка|недоступ|не найден|не воспроизв|не отдаёт)/i.test(String(message));
 
     container.appendChild(notifEl);
 

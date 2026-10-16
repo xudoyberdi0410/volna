@@ -27,6 +27,7 @@ import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
 import './network-settings.js';
 import { initWave } from './wave.js';
+import { installPlaybackFailureHandler } from './playback-failures.js';
 import { initTracker } from './tracker.js';
 import {
     parseCSV,
@@ -456,6 +457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         scrobbler
     );
     initializeUIInteractions(Player.instance, MusicAPI.instance, UIRenderer.instance);
+    installPlaybackFailureHandler(Player.instance);
     void initWave(Player.instance, MusicAPI.instance).catch((e) => console.error('[wave] init failed', e));
     initializeKeyboardShortcuts(Player.instance, audioPlayer);
 

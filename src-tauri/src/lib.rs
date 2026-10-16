@@ -4,7 +4,9 @@
 mod api_emu;
 mod commands;
 mod media;
+mod network;
 mod protocol;
+mod settings;
 mod state;
 
 use tauri::Manager;
@@ -46,7 +48,20 @@ pub fn run() {
                     }
                 });
             }
+            let network = network::NetworkState::new(settings::SettingsStore::new(
+                &app.path().app_config_dir()?,
+            ));
             app.manage(state);
+            app.manage(network);
+            // Restoring may start xray; the window does not wait for it.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                handle
+                    .state::<network::NetworkState>()
+                    .restore(&state)
+                    .await;
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +69,11 @@ pub fn run() {
             commands::ytdlp_update,
             commands::stream_prefetch,
             commands::stream_base,
+            network::net_settings,
+            network::net_apply,
+            network::net_validate,
+            network::net_health,
+            network::net_xray_logs,
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let state = ctx

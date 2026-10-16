@@ -1,10 +1,8 @@
 //! Shared app state, built once in `setup` and reached from the protocol
 //! handler and commands.
 //!
-//! The network starts in direct mode and is not yet restored from settings.
-//! The proxy phase is expected to load the saved `ProxyConfig`, call
-//! `net.apply(..)` and then `api.refresh_http_client()`, and expose net
-//! status/logs/health commands.
+//! The network starts in direct mode; `network::NetworkState::restore` then
+//! applies the saved setting, and `network.rs` owns every later switch.
 //!
 //! Audio for `<audio>` goes through the loopback server (`stream_base`),
 //! started in `lib.rs`; `volna://stream/` stays as a capped fallback for `fetch`.

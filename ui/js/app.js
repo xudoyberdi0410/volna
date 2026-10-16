@@ -2,6 +2,7 @@
 import { isIos, isSafari } from './platform-detection.js';
 import { hapticLight } from './haptics.js';
 import { MusicAPI } from './music-api.js';
+import { routeForYoutubeLink } from './volna-media.js';
 import {
     apiSettings,
     themeManager,
@@ -45,7 +46,6 @@ import {
     SVG_CLOSE,
     SVG_RESET,
 } from './icons.js';
-import { HiFiClient } from './HiFi.js';
 
 // Lazy-loaded modules
 let settingsModule = null;
@@ -60,56 +60,11 @@ async function loadSettingsModule() {
 
 let contributorsLoaded = false;
 
+// The Monochrome contributor list came from tracks.monochrome.st; Volna
+// does not call Monochrome services. Credits live in ui/NOTICE.
 async function fetchcontributors() {
     if (contributorsLoaded) return;
     contributorsLoaded = true;
-    try {
-        const response = await fetch('https://tracks.monochrome.st/contributors');
-        if (!response.ok) {
-            contributorsLoaded = false;
-            return;
-        }
-        const data1 = await response.json();
-        if (!Array.isArray(data1)) {
-            contributorsLoaded = false;
-            return;
-        }
-
-        let data = data1.filter(
-            (user) => user.type !== 'Bot' && user.login !== 'edidealt' && user.login !== 'satanyahoo'
-        );
-
-        const edideaur = data.find((user) => user.login === 'edideaur');
-        if (edideaur) {
-            edideaur.contributions += data1.find((u) => u.login === 'edidealt')?.contributions || 0;
-            edideaur.contributions += data1.find((u) => u.login === 'satanyahoo')?.contributions || 0;
-            edideaur.contributions += 300;
-        }
-
-        data.sort((a, b) => b.contributions - a.contributions);
-
-        const con = document.querySelector('.about-contributors');
-        if (!con) return;
-
-        data.forEach((user) => {
-            const userDIV = document.createElement('div');
-            userDIV.innerHTML = `
-            <a href="${user.html_url}" target="_blank">
-            <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${user.avatar_url}&s=50" alt="${user.login}" width="50" height="50" style="border-radius: 50%;" loading="lazy">
-            <span>${user.login}</span>
-            <span class="contrib">Contributions: ${user.contributions}</span>
-            </a>
-            `;
-            con.appendChild(userDIV);
-        });
-    } catch (e) {
-        contributorsLoaded = false;
-        const con = document.querySelector('.about-contributors-failed');
-        if (!con) return;
-        con.innerHTML = `
-        <h4 style="text-align: center; color: var(--muted-foreground);">Failed to Fetch Contributor List</h4>
-        `;
-    }
 }
 
 async function loadMetadataModule() {
@@ -300,7 +255,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (import.meta.env.DEV) {
         window.monochrome = {
-            HiFiClient,
             LyricsManager,
             MusicAPI,
             Player,
@@ -329,26 +283,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     new ThemeStore();
-
-    try {
-        await HiFiClient.initialize({
-            storage: [
-                localStorage,
-                ...(import.meta.env.DEV
-                    ? [
-                          {
-                              setItem: (key, value) => console.debug(`HiFiClient storage set: ${key} = ${value}`),
-                              removeItem: (key) => console.debug(`HiFiClient storage remove: ${key}`),
-                          },
-                      ]
-                    : []),
-            ],
-            token: localStorage.getItem('hifi_token') || undefined,
-            tokenExpiry: parseInt(localStorage.getItem('hifi_token_expiry') || '0'),
-        });
-    } catch (err) {
-        console.error('Failed to initialize HiFiClient:', err);
-    }
 
     await MusicAPI.initialize(apiSettings);
 
@@ -2077,6 +2011,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 200);
 
     const handleExternalLink = (query) => {
+        const youtubeRoute = routeForYoutubeLink(query.startsWith('http') ? query : `https://${query}`);
+        if (youtubeRoute) {
+            navigate(youtubeRoute);
+            return true;
+        }
+
         const isExternalLink =
             query.includes('monochrome.tf/') ||
             query.includes('monochrome.samidy.com/') ||

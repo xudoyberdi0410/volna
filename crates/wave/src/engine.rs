@@ -129,6 +129,9 @@ struct Session {
     session_artist: HashMap<String, f64>,
     mood_artists: HashSet<String>,
     done_jobs: HashSet<Job>,
+    /// New seeds or settings: fetch before the next pick even if the pool
+    /// is still full, so the change is heard right away.
+    force_refill: bool,
     /// Tracks completed in this session: good fresh seeds.
     completed: Vec<String>,
 }
@@ -221,6 +224,7 @@ impl<S: CandidateSource> Wave<S> {
             s.done_jobs
                 .retain(|j| !matches!(j, Job::Mood(_) | Job::Affine { .. }));
             s.settings = settings;
+            s.force_refill = true;
         }
         Ok(())
     }
@@ -271,6 +275,12 @@ impl<S: CandidateSource> Wave<S> {
     async fn fill(&self, n: usize) -> Result<Vec<Track>> {
         let mut out = Vec::with_capacity(n);
         let mut refills = 0;
+        let forced = std::mem::take(&mut self.session.lock().await.force_refill);
+        if forced {
+            let profile = self.profile()?;
+            self.refill(&profile).await?;
+            refills += 1;
+        }
         while out.len() < n {
             let profile = self.profile()?;
             let picked = {
@@ -636,6 +646,7 @@ impl<S: CandidateSource> Wave<S> {
                     if !s.seeds.contains(&seed) {
                         s.seeds.insert(0, seed);
                         s.seeds.truncate(MAX_SEEDS);
+                        s.force_refill = true;
                         out.reseeded = true;
                     }
                 }
@@ -709,6 +720,7 @@ impl<S: CandidateSource> Wave<S> {
         let fresh = self.pick_seeds(&profile, s, want);
         tracing::info!(?fresh, "wave: new seeds");
         s.seeds.extend(fresh);
+        s.force_refill = true;
         Ok(true)
     }
 }
@@ -858,6 +870,26 @@ mod tests {
         .unwrap();
         let batch = w.start(10).await.unwrap();
         assert!(batch.iter().any(|t| t.artists[0].name == "M"));
+    }
+
+    #[tokio::test]
+    async fn changing_the_mood_mid_session_is_heard_at_once() {
+        let (w, _) = wave();
+        w.store().upsert_track(&track("s1", "A"), 0).unwrap();
+        w.store().set_like("s1", true, 1_000 * DAY).unwrap();
+        let first = w.start(3).await.unwrap();
+        assert!(first.iter().all(|t| t.artists[0].name != "M"));
+        w.set_settings(WaveSettings {
+            mood: Some(crate::settings::Mood::Calm),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let next = w.next(4).await.unwrap();
+        assert!(
+            next.iter().filter(|t| t.artists[0].name == "M").count() >= 2,
+            "{next:?}"
+        );
     }
 
     #[tokio::test]

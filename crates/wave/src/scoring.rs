@@ -218,14 +218,18 @@ pub fn score(
         Character::Popular => score += 1.2 * popularity(t),
     }
 
+    // With a mood or activity picked, the wave should sound like it: mood
+    // playlists lead, the listener's usual radio fills in.
     if settings.wants_mood() {
+        let mood_artist = s
+            .mood_artists
+            .is_some_and(|m| artist_keys(t).iter().any(|k| m.contains(k)));
         if c.origin == Origin::Mood {
-            score += 0.6;
-        }
-        if s.mood_artists
-            .is_some_and(|m| artist_keys(t).iter().any(|k| m.contains(k)))
-        {
+            score += 1.0;
+        } else if mood_artist {
             score += 0.3;
+        } else {
+            score -= 0.4;
         }
     }
 

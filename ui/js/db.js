@@ -564,20 +564,7 @@ export class MusicDatabase {
                 }
 
                 itemsArray.forEach((item) => {
-                    if (item.id && typeof item.id === 'string' && !isNaN(item.id)) {
-                        item.id = parseInt(item.id, 10);
-                    }
-                    if (item.album?.id && typeof item.album.id === 'string' && !isNaN(item.album.id)) {
-                        item.album.id = parseInt(item.album.id, 10);
-                    }
-                    if (item.artists) {
-                        item.artists.forEach((artist) => {
-                            if (artist.id && typeof artist.id === 'string' && !isNaN(artist.id)) {
-                                artist.id = parseInt(artist.id, 10);
-                            }
-                        });
-                    }
-
+                    // YouTube ids are strings; never coerce them to numbers.
                     // Critical: Ensure key exists and is a valid IndexedDB key for store.put()
                     const keyPath = store.keyPath;
                     if (keyPath && !isValidIDBKey(item[keyPath])) {

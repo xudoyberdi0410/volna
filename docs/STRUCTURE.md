@@ -48,8 +48,17 @@ Vite first. `tauri build` turns on `custom-protocol` and embeds `ui/dist`.
 
 - Rust: `src-tauri/src/protocol.rs`. `Target::parse` handles `volna://api/...` (Linux/macOS)
   and `http://volna.localhost/api/...` (Windows WebView2). Every response carries
-  `Access-Control-Allow-Origin: *`, and OPTIONS returns 204. Right now every known route answers
-  501 JSON `{"status":501,"error":"..."}` and unknown routes answer 404.
+  `Access-Control-Allow-Origin: *`, and OPTIONS returns 204. Unknown routes answer 404.
+- `volna://api/...` is `src-tauri/src/api_emu/`: the hifi-api endpoints of
+  `docs/hifi-api-contract.md` backed by YouTube Music, plus `/home/`, `/explore/`,
+  `/explore/genre/`, `/lyrics/`, `/search/suggest/` and `/proxy/?u=` (allowlisted GET relay for
+  the lyrics providers; the page installs a fetch shim for them in `ui/js/lyrics-proxy.js`).
+  Errors are `{"status":4xx/502,"error":"..."}`. Live tests:
+  `cargo test -p volna api_live -- --ignored --nocapture --test-threads=1`.
+- UI side: `ui/js/volna-media.js` builds the playback descriptor (loopback audio server from
+  `window.__VOLNA__.streamBase`), passes volna image URLs through and maps pasted YouTube links.
+  The TIDAL client (`HiFi.ts`), tracks.monochrome.st, community playlists, instance settings,
+  Deezer fallback, editor's picks and AOTY tabs are gone.
 - JS: `ui/js/volna-url.js`, with `volnaBase('api'|'stream')` and `volnaUrl(route, path, query)`.
   Use it everywhere instead of hard-coding the scheme.
 - Checked in a real webview: `fetch('volna://api/info/')` returns 501 both from

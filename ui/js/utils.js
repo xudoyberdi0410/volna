@@ -384,10 +384,8 @@ export const createQualityBadgeHTML = (track) => {
         return '<span class="quality-badge quality-hires" title="FLAC">FLAC</span>';
     }
 
-    if (derivedQuality === 'HIGH' || derivedQuality === 'LOW') {
-        return '<span class="quality-badge quality-hires" title="AAC">AAC</span>';
-    }
-
+    // Every YouTube Music stream is lossy (Opus/AAC), so a per-track badge
+    // carries no information there.
     return '';
 };
 

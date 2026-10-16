@@ -2209,8 +2209,7 @@ export function initializeTrackInteractions(player, api, mainContent, contextMen
                             const data = await api.getMix(id);
                             item = data.mix;
                         } else if (type === 'track') {
-                            const data = await api.getTrack(id);
-                            item = data.track;
+                            item = await api.getTrackMetadata(id);
                         }
                     } catch (err) {
                         console.error(err);

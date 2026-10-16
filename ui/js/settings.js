@@ -31,17 +31,13 @@ import {
     pwaUpdateSettings,
     contentBlockingSettings,
     musicProviderSettings,
-    deezerFallbackSettings,
     gaplessPlaybackSettings,
     modalSettings,
-    preferDolbyAtmosSettings,
-    nativeOsAtmosSettings,
     binauralDspSettings,
     fullscreenCoverNoRoundSettings,
     fullscreenCoverVanillaTiltSettings,
     fullscreenCoverTiltDistanceSettings,
     fullscreenCoverTiltSpeedSettings,
-    devModeSettings,
     serverDisruptionSettings,
 } from './storage.js';
 import { audioContextManager, getPresetsForBandCount } from './audio-context.js';
@@ -49,7 +45,6 @@ import { calculateBiquadResponse, interpolate, getNormalizationOffset, runAutoEq
 import { parseRawData, TARGETS, SPEAKER_TARGETS } from './autoeq-data.js';
 import { fetchAutoEqIndex, fetchHeadphoneData, searchHeadphones, POPULAR_HEADPHONES } from './autoeq-importer.js';
 import { db } from './db.js';
-import { canBrowserStreamAtmosQuality } from './platform-detection.js';
 
 async function getButterchurnPresets(...args) {
     const butterchurnModule = await import('./visualizers/butterchurn.js');
@@ -70,34 +65,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         document.querySelectorAll('.settings-tab-content').forEach((c) => c.classList.remove('active'));
         settingsTab.classList.add('active');
         document.getElementById(`settings-tab-${savedTab}`)?.classList.add('active');
-    }
-
-    // ========================================
-    // Dev Mode
-    // ========================================
-    const devModeToggle = document.getElementById('dev-mode-toggle');
-    const devModeUrlSetting = document.getElementById('dev-mode-url-setting');
-    const devModeUrlInput = document.getElementById('dev-mode-url-input');
-
-    function updateDevModeUI() {
-        if (devModeToggle) devModeToggle.checked = devModeSettings.isEnabled();
-        if (devModeUrlSetting) devModeUrlSetting.style.display = devModeSettings.isEnabled() ? '' : 'none';
-        if (devModeUrlInput) devModeUrlInput.value = devModeSettings.getUrl();
-    }
-
-    updateDevModeUI();
-
-    if (devModeToggle) {
-        devModeToggle.addEventListener('change', (e) => {
-            devModeSettings.setEnabled(e.target.checked);
-            updateDevModeUI();
-        });
-    }
-
-    if (devModeUrlInput) {
-        devModeUrlInput.addEventListener('change', (e) => {
-            devModeSettings.setUrl(e.target.value.trim());
-        });
     }
 
     // ========================================
@@ -757,98 +724,24 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    const deezerFallbackToggle = document.getElementById('deezer-fallback-toggle');
-    if (deezerFallbackToggle) {
-        deezerFallbackToggle.checked = deezerFallbackSettings.isEnabled();
-        deezerFallbackToggle.addEventListener('change', (e) => {
-            deezerFallbackSettings.setEnabled(e.target.checked);
-        });
-    }
-
-    const deezerApiBaseUrlInput = document.getElementById('deezer-fallback-api-base-url');
-    if (deezerApiBaseUrlInput) {
-        deezerApiBaseUrlInput.value = deezerFallbackSettings.getApiBaseUrl();
-        deezerApiBaseUrlInput.addEventListener('change', (e) => {
-            deezerFallbackSettings.setApiBaseUrl(e.target.value.trim());
-        });
-    }
-
-    // Streaming Quality setting
+    // Streaming quality: YouTube Music serves Opus ~160 kbps (AAC 128 kbps
+    // fallback) or a data-saver stream; there is no lossless tier.
     const streamingQualitySetting = document.getElementById('streaming-quality-setting');
     if (streamingQualitySetting) {
-        const storedAdaptiveQuality = localStorage.getItem('adaptive-playback-quality') || 'auto';
-        const savedAdaptiveQuality =
-            storedAdaptiveQuality === 'DOLBY_ATMOS' ? 'DOLBY_ATMOS_EAC3_HIGH' : storedAdaptiveQuality;
-        if (storedAdaptiveQuality !== savedAdaptiveQuality) {
-            localStorage.setItem('adaptive-playback-quality', savedAdaptiveQuality);
-            localStorage.setItem('playback-quality', savedAdaptiveQuality);
-        }
-
-        // Map the stored auto state to the dropdown, or if it doesn't match an option, use the playback-quality value
-        const optionExists = Array.from(streamingQualitySetting.options).some(
-            (opt) => opt.value === savedAdaptiveQuality
-        );
-        streamingQualitySetting.value = optionExists
-            ? savedAdaptiveQuality
-            : localStorage.getItem('playback-quality') || 'auto';
-
-        // Apply initially
-        if (player.forceQuality) player.forceQuality(streamingQualitySetting.value);
-        const apiQuality = streamingQualitySetting.value === 'auto' ? 'HI_RES_LOSSLESS' : streamingQualitySetting.value;
-        player.setQuality(localStorage.getItem('playback-quality') || apiQuality);
-
-        const sourcesDescription = document.getElementById('streaming-quality-sources');
-        const atmosWarning = document.getElementById('atmos-streaming-warning');
-        const atmosWarningText = document.getElementById('atmos-streaming-warning-text');
-        const updateStreamingQualityDetails = () => {
-            const option = streamingQualitySetting.selectedOptions?.[0];
-            if (sourcesDescription) {
-                sourcesDescription.textContent = option?.dataset.sources
-                    ? `Supported sources: ${option.dataset.sources}`
-                    : 'Default playback quality for streams';
-            }
-
-            const isAc4 = streamingQualitySetting.value.startsWith('DOLBY_ATMOS_AC4_');
-            const isEac3 = streamingQualitySetting.value.startsWith('DOLBY_ATMOS_EAC3_');
-            const supported = canBrowserStreamAtmosQuality(streamingQualitySetting.value);
-            const showWarning = isAc4 || (isEac3 && !supported);
-            if (atmosWarning) atmosWarning.style.display = showWarning ? '' : 'none';
-            if (showWarning && atmosWarningText) {
-                atmosWarningText.textContent = supported
-                    ? 'AC-4 streaming support is experimental and may still fail in this browser.'
-                    : `This browser does not report ${isAc4 ? 'AC-4' : 'E-AC-3'} playback support, so this quality cannot be streamed here.`;
-            }
-        };
-        updateStreamingQualityDetails();
+        const stored = localStorage.getItem('playback-quality');
+        const quality = stored === 'LOW' ? 'LOW' : 'HIGH';
+        streamingQualitySetting.value = quality;
+        localStorage.setItem('playback-quality', quality);
+        localStorage.setItem('adaptive-playback-quality', quality);
+        if (player.forceQuality) player.forceQuality(quality);
+        player.setQuality(quality);
 
         streamingQualitySetting.addEventListener('change', (e) => {
-            const val = e.target.value;
-
-            // Set adaptive DASH quality
+            const val = e.target.value === 'LOW' ? 'LOW' : 'HIGH';
             localStorage.setItem('adaptive-playback-quality', val);
+            localStorage.setItem('playback-quality', val);
             if (player.forceQuality) player.forceQuality(val);
-
-            // Set fallback API quality
-            const newApiQuality = val === 'auto' ? 'HI_RES_LOSSLESS' : val;
-            player.setQuality(newApiQuality);
-            localStorage.setItem('playback-quality', newApiQuality);
-            updateStreamingQualityDetails();
-        });
-    }
-
-    const preferDolbyAtmosToggle = document.getElementById('prefer-dolby-atmos-toggle');
-    if (preferDolbyAtmosToggle) {
-        preferDolbyAtmosToggle.checked = preferDolbyAtmosSettings.isEnabled();
-        preferDolbyAtmosToggle.addEventListener('change', (e) => {
-            preferDolbyAtmosSettings.setEnabled(e.target.checked);
-        });
-    }
-
-    const nativeOsAtmosToggle = document.getElementById('native-os-atmos-toggle');
-    if (nativeOsAtmosToggle) {
-        nativeOsAtmosToggle.checked = nativeOsAtmosSettings.isEnabled();
-        nativeOsAtmosToggle.addEventListener('change', (e) => {
-            nativeOsAtmosSettings.setEnabled(e.target.checked);
+            player.setQuality(val);
         });
     }
 
@@ -6129,75 +6022,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         sidebarSettingsGroup.addEventListener('drop', (e) => e.preventDefault());
     }
 
-    // API settings
-    document.getElementById('refresh-speed-test-btn')?.addEventListener('click', async () => {
-        const btn = document.getElementById('refresh-speed-test-btn');
-        const originalText = btn.textContent;
-        btn.textContent = 'Testing...';
-        btn.disabled = true;
-
-        try {
-            await api.settings.refreshInstances();
-            ui.renderApiSettings();
-            btn.textContent = 'Done!';
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.disabled = false;
-            }, 1500);
-        } catch (error) {
-            console.error('Failed to refresh speed tests:', error);
-            btn.textContent = 'Error';
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.disabled = false;
-            }, 1500);
-        }
-    });
-
-    document.getElementById('api-instance-list')?.addEventListener('click', async (e) => {
-        const button = e.target.closest('button');
-        if (!button) return;
-
-        const li = button.closest('li');
-        const type = button.dataset.type || li?.dataset.type || 'api';
-
-        if (button.classList.contains('add-instance')) {
-            const url = prompt(`Enter custom ${type.toUpperCase()} instance URL (e.g. https://my-instance.com):`);
-            if (url && url.trim()) {
-                let formattedUrl = url.trim();
-                if (!formattedUrl.startsWith('http')) {
-                    formattedUrl = 'https://' + formattedUrl;
-                }
-                api.settings.addUserInstance(type, formattedUrl);
-                ui.renderApiSettings();
-            }
-            return;
-        }
-
-        if (button.classList.contains('delete-instance')) {
-            const url = li.dataset.url;
-            if (url && confirm(`Delete custom instance ${url}?`)) {
-                api.settings.removeUserInstance(type, url);
-                ui.renderApiSettings();
-            }
-            return;
-        }
-
-        const index = parseInt(li?.dataset.index, 10);
-        if (isNaN(index)) return;
-
-        const instances = await api.settings.getInstances(type);
-
-        if (button.classList.contains('move-up') && index > 0) {
-            [instances[index], instances[index - 1]] = [instances[index - 1], instances[index]];
-        } else if (button.classList.contains('move-down') && index < instances.length - 1) {
-            [instances[index], instances[index + 1]] = [instances[index + 1], instances[index]];
-        }
-
-        api.settings.saveInstances(instances, type);
-        ui.renderApiSettings();
-    });
-
     document.getElementById('clear-cache-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('clear-cache-btn');
         const originalText = btn.textContent;
@@ -6210,9 +6034,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             setTimeout(() => {
                 btn.textContent = originalText;
                 btn.disabled = false;
-                if (window.location.hash.includes('settings')) {
-                    ui.renderApiSettings();
-                }
             }, 1500);
         } catch (error) {
             console.error('Failed to clear cache:', error);

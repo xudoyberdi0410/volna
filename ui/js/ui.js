@@ -36,8 +36,8 @@ import { getVibrantColorFromImage } from './vibrant-color.js';
 import { Visualizer } from './visualizer.js';
 import { audioContextManager } from './audio-context.js';
 import { navigate } from './router.js';
+import { isDirectImage } from './volna-media.js';
 import { sidePanelManager } from './side-panel.js';
-import { searchCommunityPlaylists } from './community-playlists.js';
 import {
     renderUnreleasedPage as renderUnreleasedTrackerPage,
     renderTrackerArtistPage as renderTrackerArtistContent,
@@ -100,6 +100,11 @@ import {
     SVG_SEARCH,
     SVG_CHECKBOX,
 } from './icons.js';
+
+/** Explore/home shelf type (from api_emu) -> card renderer type. */
+function exploreSectionType(type) {
+    return { ALBUM_LIST: 'album', TRACK_LIST: 'track', PLAYLIST_LIST: 'playlist', ARTIST_LIST: 'artist' }[type] || null;
+}
 
 const AOTY_BASE = 'https://aoty.edideaur.works';
 const AOTY_CACHE_TTL = 86_400_000; // 24 hours
@@ -721,14 +726,7 @@ export class UIRenderer {
             return `<video src="${videoCoverUrl}" poster="${imageUrl}" class="${className}" alt="${alt}" preload="metadata" playsinline muted></video>`;
         }
 
-        if (
-            isEditorsPick &&
-            cover &&
-            typeof cover === 'string' &&
-            !cover.startsWith('http') &&
-            !cover.startsWith('blob:') &&
-            !cover.startsWith('assets/')
-        ) {
+        if (isEditorsPick && cover && typeof cover === 'string' && !isDirectImage(cover)) {
             const formattedId = String(cover).replace(/-/g, '/');
             const tidalUrl = `https://resources.tidal.com/images/${formattedId}/320x320.jpg`;
             const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(tidalUrl)}&w=250&h=250&output=webp`;
@@ -796,9 +794,9 @@ export class UIRenderer {
             type: 'playlist',
             id: playlist.uuid,
             href: playlist._href || `/playlist/${playlist.uuid}`,
-            title: playlist.title,
+            title: escapeHtml(playlist.title),
             subtitle: `${playlist.numberOfTracks || 0} tracks`,
-            imageHTML: `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${this.api.getCoverUrl(imageId)}" alt="${playlist.title}" class="card-image" loading="lazy">`,
+            imageHTML: `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${this.api.getCoverUrl(imageId)}" alt="${escapeHtml(playlist.title)}" class="card-image" loading="lazy">`,
             actionButtonsHTML: `
                 <button class="like-btn card-like-btn" data-action="toggle-like" data-type="playlist" title="Add to Liked">
                     ${this.createHeartIcon(false)}
@@ -833,9 +831,9 @@ export class UIRenderer {
             type: 'mix',
             id: mix.id,
             href: `/mix/${mix.id}`,
-            title: mix.title,
-            subtitle: description,
-            imageHTML: `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${imageSrc}" alt="${mix.title}" class="card-image" loading="lazy">`,
+            title: escapeHtml(mix.title),
+            subtitle: escapeHtml(description),
+            imageHTML: `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${imageSrc}" alt="${escapeHtml(mix.title)}" class="card-image" loading="lazy">`,
             actionButtonsHTML: `
                 <button class="like-btn card-like-btn" data-action="toggle-like" data-type="mix" title="Add to Liked">
                     ${this.createHeartIcon(false)}
@@ -2634,8 +2632,8 @@ export class UIRenderer {
         const sidebarText = document.getElementById('sidebar-donate-goal-text');
 
         try {
-            const response = await fetch('https://tracks.monochrome.st/goal');
-            const data = await response.json();
+            // The donation goal lived on tracks.monochrome.st; Volna has none.
+            const data = null;
             let percentage = 0;
 
             if (data && data.percentage) {
@@ -2873,6 +2871,9 @@ export class UIRenderer {
                 editorsPicksTab.style.display = homePageSettings.shouldShowEditorsPicks() ? '' : 'none';
             }
 
+            // YouTube Music's own home shelves, shown with or without history.
+            void this.renderHomeFeed();
+
             if (!hasActivity) {
                 if (welcomeEl) welcomeEl.style.display = 'block';
                 if (contentEl) contentEl.style.display = 'none';
@@ -2948,6 +2949,28 @@ export class UIRenderer {
         }
     }
 
+    /** The logged-out YouTube Music home feed (`/home/`), rendered once per session. */
+    async renderHomeFeed() {
+        const container = document.getElementById('home-ytm-feed');
+        if (!container || container.dataset.loaded === 'true') return;
+        container.dataset.loaded = 'true';
+        container.innerHTML = `<div class="card-grid">${this.createSkeletonCards(6)}</div>`;
+        try {
+            const data = await this.api.getHomeFeed();
+            container.innerHTML = '';
+            for (const section of data.sections || []) {
+                const type = exploreSectionType(section.type);
+                if (type && section.items?.length) {
+                    await this.renderExploreSection(container, section.title, section.items, type);
+                }
+            }
+        } catch (e) {
+            console.warn('YouTube Music home feed failed:', e);
+            container.dataset.loaded = '';
+            container.innerHTML = '';
+        }
+    }
+
     async renderExplorePage() {
         const container = document.getElementById('explore-grid');
         if (!container) return;
@@ -2959,49 +2982,29 @@ export class UIRenderer {
         container.innerHTML = `<div class="card-grid">${this.createSkeletonCards(12)}</div>`;
 
         try {
-            const response = await fetch('https://hot.monochrome.tf/');
-            if (!response.ok) throw new Error('Failed to load explore data');
-            const data = await response.json();
+            const data = await this.api.getExplore();
 
             container.innerHTML = '';
 
-            const GENRES = [
-                { id: 'hip_hop', name: 'Hip-Hop' },
-                { id: 'rnb', name: 'R&B / Soul' },
-                { id: 'blues', name: 'Blues' },
-                { id: 'classical', name: 'Classical' },
-                { id: 'country', name: 'Country' },
-                { id: 'dance_electronic', name: 'Dance & Electronic' },
-                { id: 'americana', name: 'Folk / Americana' },
-                { id: 'world', name: 'Global' },
-                { id: 'gospel', name: 'Gospel / Christian' },
-                { id: 'jazz', name: 'Jazz' },
-                { id: 'kpop', name: 'K-Pop' },
-                { id: 'kids', name: 'Kids' },
-                { id: 'latin', name: 'Latin' },
-                { id: 'metal', name: 'Metal' },
-                { id: 'pop', name: 'Pop' },
-                { id: 'reggae', name: 'Reggae / Dancehall' },
-                { id: 'retro', name: 'Legacy' },
-                { id: 'indierock', name: 'Rock / Indie' },
-            ];
-
-            if (GENRES.length > 0) {
+            for (const category of data.categories || []) {
+                if (!category.genres?.length) continue;
                 const genresSection = document.createElement('section');
                 genresSection.className = 'content-section';
-                genresSection.innerHTML = `<h2 class="section-title">Genres</h2>`;
+                genresSection.innerHTML = `<h2 class="section-title">${escapeHtml(category.title)}</h2>`;
 
                 const genresGrid = document.createElement('div');
                 genresGrid.style.display = 'flex';
                 genresGrid.style.flexWrap = 'wrap';
                 genresGrid.style.gap = '0.5rem';
-                genresGrid.innerHTML = GENRES.map(
-                    (genre) => `
-                    <div class="card genre-card" data-genre-id="${genre.id}" data-genre-name="${escapeHtml(genre.name)}" style="cursor: pointer; background: var(--secondary); padding: 0.6rem 1rem; border-radius: var(--radius); border: 1px solid var(--border);">
+                genresGrid.innerHTML = category.genres
+                    .map(
+                        (genre) => `
+                    <div class="card genre-card" data-genre-id="${escapeHtml(genre.id)}" data-genre-name="${escapeHtml(genre.name)}" style="cursor: pointer; background: var(--secondary); padding: 0.6rem 1rem; border-radius: var(--radius); border: 1px solid var(--border);${genre.color ? ` border-left: 4px solid ${escapeHtml(genre.color)};` : ''}">
                         <h3 style="margin: 0; font-size: 0.875rem; font-weight: 600;">${escapeHtml(genre.name)}</h3>
                     </div>
                 `
-                ).join('');
+                    )
+                    .join('');
 
                 genresSection.appendChild(genresGrid);
                 container.appendChild(genresSection);
@@ -3013,30 +3016,10 @@ export class UIRenderer {
                 }
             }
 
-            if (data.top_albums && data.top_albums.length > 0) {
-                await this.renderExploreSection(container, 'Trending Albums', data.top_albums, 'album');
-            }
-
-            if (data.top_tracks && data.top_tracks.length > 0) {
-                await this.renderExploreSection(container, 'Trending Tracks', data.top_tracks, 'track');
-            }
-
-            if (data.featured_playlists && data.featured_playlists.length > 0) {
-                await this.renderExploreSection(container, 'Featured Playlists', data.featured_playlists, 'playlist');
-            }
-
-            if (data.sections && data.sections.length > 0) {
-                for (const section of data.sections) {
-                    if (section.items && section.items.length > 0) {
-                        let type = null;
-                        if (section.type === 'ALBUM_LIST') type = 'album';
-                        else if (section.type === 'TRACK_LIST') type = 'track';
-                        else if (section.type === 'PLAYLIST_LIST') type = 'playlist';
-
-                        if (type) {
-                            await this.renderExploreSection(container, section.title, section.items, type);
-                        }
-                    }
+            for (const section of data.sections || []) {
+                const type = exploreSectionType(section.type);
+                if (type && section.items?.length) {
+                    await this.renderExploreSection(container, section.title, section.items, type);
                 }
             }
 
@@ -4032,7 +4015,7 @@ export class UIRenderer {
     async renderExploreSection(container, title, items, type) {
         const section = document.createElement('section');
         section.className = 'content-section';
-        section.innerHTML = `<h2 class="section-title">${title}</h2>`;
+        section.innerHTML = `<h2 class="section-title">${escapeHtml(title)}</h2>`;
 
         if (type === 'track') {
             const list = document.createElement('div');
@@ -4046,6 +4029,7 @@ export class UIRenderer {
                 .map((item) => {
                     if (type === 'album') return this.createAlbumCardHTML(item);
                     if (type === 'playlist') return this.createPlaylistCardHTML(item);
+                    if (type === 'artist') return this.createArtistCardHTML(item);
                     return '';
                 })
                 .join('');
@@ -4054,6 +4038,7 @@ export class UIRenderer {
                 let selector;
                 if (type === 'album') selector = `[data-album-id="${item.id}"]`;
                 if (type === 'playlist') selector = `[data-playlist-id="${item.uuid}"]`;
+                if (type === 'artist') selector = `[data-artist-id="${item.id}"]`;
 
                 if (selector) {
                     const el = grid.querySelector(selector);
@@ -4061,6 +4046,7 @@ export class UIRenderer {
                         trackDataStore.set(el, item);
                         if (type === 'album') await this.updateLikeState(el, 'album', item.id);
                         if (type === 'playlist') await this.updateLikeState(el, 'playlist', item.uuid);
+                        if (type === 'artist') await this.updateLikeState(el, 'artist', item.id);
                     }
                 }
             }
@@ -4092,9 +4078,7 @@ export class UIRenderer {
         });
 
         try {
-            const response = await fetch(`https://hot.monochrome.tf/explore/genre/?id=${genreId}`);
-            if (!response.ok) throw new Error('Failed to load genre data');
-            const data = await response.json();
+            const data = await this.api.getExploreGenre(genreId);
 
             const header = container.firstElementChild;
             container.innerHTML = '';
@@ -4103,18 +4087,10 @@ export class UIRenderer {
             const contentContainer = document.createElement('div');
             container.appendChild(contentContainer);
 
-            if (data.sections && data.sections.length > 0) {
-                for (const section of data.sections) {
-                    if (section.items && section.items.length > 0) {
-                        let type = null;
-                        if (section.type === 'ALBUM_LIST') type = 'album';
-                        else if (section.type === 'TRACK_LIST') type = 'track';
-                        else if (section.type === 'PLAYLIST_LIST') type = 'playlist';
-
-                        if (type) {
-                            await this.renderExploreSection(contentContainer, section.title, section.items, type);
-                        }
-                    }
+            for (const section of data.sections || []) {
+                const type = exploreSectionType(section.type);
+                if (type && section.items?.length) {
+                    await this.renderExploreSection(contentContainer, section.title, section.items, type);
                 }
             }
 
@@ -4807,13 +4783,11 @@ export class UIRenderer {
         const artistsContainer = document.getElementById('search-artists-container');
         const albumsContainer = document.getElementById('search-albums-container');
         const playlistsContainer = document.getElementById('search-playlists-container');
-        const communityPlaylistsContainer = document.getElementById('search-community-playlists-container');
 
         tracksContainer.innerHTML = this.createSkeletonTracks(8, true);
         artistsContainer.innerHTML = this.createSkeletonCards(6, true);
         albumsContainer.innerHTML = this.createSkeletonCards(6, false);
         playlistsContainer.innerHTML = this.createSkeletonCards(6, false);
-        communityPlaylistsContainer.innerHTML = this.createSkeletonCards(6, false);
 
         if (this.searchAbortController) {
             this.searchAbortController.abort();
@@ -4983,9 +4957,6 @@ export class UIRenderer {
                     await this._renderSearchPlaylists(state);
                     break;
                 }
-                case 'community-playlists':
-                    await this._renderSearchCommunityPlaylists(state);
-                    break;
             }
         } catch (error) {
             if (error.name === 'AbortError') return;
@@ -4995,7 +4966,6 @@ export class UIRenderer {
                 albums: 'search-albums-container',
                 artists: 'search-artists-container',
                 playlists: 'search-playlists-container',
-                'community-playlists': 'search-community-playlists-container',
             };
             const container = document.getElementById(containerIds[tabName]);
             if (container) {
@@ -5056,25 +5026,6 @@ export class UIRenderer {
             : createPlaceholder('No playlists found.');
         for (const playlist of state.playlists) {
             const el = playlistsContainer.querySelector(`[data-playlist-id="${playlist.uuid}"]`);
-            if (el) {
-                trackDataStore.set(el, playlist);
-                await this.updateLikeState(el, 'playlist', playlist.uuid);
-            }
-        }
-    }
-
-    async _renderSearchCommunityPlaylists(state) {
-        const container = document.getElementById('search-community-playlists-container');
-
-        if (!state.communityPlaylists) {
-            container.innerHTML = this.createSkeletonCards(6, false);
-            state.communityPlaylists = await searchCommunityPlaylists(state.query, state.signal);
-        }
-        container.innerHTML = state.communityPlaylists.length
-            ? state.communityPlaylists.map((playlist) => this.createPlaylistCardHTML(playlist)).join('')
-            : createPlaceholder('No community playlists found.');
-        for (const playlist of state.communityPlaylists) {
-            const el = container.querySelector(`[data-playlist-id="${playlist.uuid}"]`);
             if (el) {
                 trackDataStore.set(el, playlist);
                 await this.updateLikeState(el, 'playlist', playlist.uuid);
@@ -5364,108 +5315,7 @@ export class UIRenderer {
                 `By <a href="/artist/${album.artist.id}">${album.artist.name}</a>` +
                 (firstCopyright ? ` • ${firstCopyright}` : '');
 
-            fetchAOTY(`/album?artist=${encodeURIComponent(album.artist.name)}&name=${encodeURIComponent(album.title)}`)
-                .then((data) => {
-                    const aotyUrl = data.url
-                        ? data.url.startsWith('http')
-                            ? data.url
-                            : `https://www.albumoftheyear.org${data.url}`
-                        : null;
-
-                    // Must Hear badge (from cached index built by the AOTY tab)
-                    if (checkAOTYMustHear(album.artist.name, album.title)) {
-                        const badge = document.createElement('span');
-                        badge.textContent = 'MUST HEAR';
-                        badge.style.cssText =
-                            'background:var(--primary);color:var(--primary-foreground);font-size:0.6rem;font-weight:700;padding:3px 8px;border-radius:3px;margin-left:10px;vertical-align:middle;letter-spacing:0.05em;cursor:pointer;';
-                        badge.title = 'View Must Hear albums on AOTY';
-                        badge.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            navigate('/');
-                            setTimeout(() => {
-                                document.querySelector('.home-tab[data-tab="aoty"]')?.click();
-                                setTimeout(() => {
-                                    document.querySelector('.aoty-subnav-btn[data-aoty-tab="musthear"]')?.click();
-                                }, 80);
-                            }, 80);
-                        });
-                        titleEl.appendChild(badge);
-                    }
-
-                    // Label, append to producer line
-                    if (data.label) {
-                        const labelUrl = data.labelUrl
-                            ? data.labelUrl.startsWith('http')
-                                ? data.labelUrl
-                                : `https://www.albumoftheyear.org${data.labelUrl}`
-                            : null;
-                        const labelLink = labelUrl
-                            ? `<a href="${labelUrl}" target="_blank" rel="noopener">${escapeHtml(data.label)}</a>`
-                            : escapeHtml(data.label);
-                        prodEl.innerHTML += ` · ${labelLink}`;
-                    }
-
-                    // Critic score, spec: integer|null, live: "82" | "NR" | null
-                    const critScore = aotyScore(data.criticScore);
-                    const critCount = aotyCount(data.criticCount);
-                    const reviews = data.reviews || [];
-                    if (critScore == null) {
-                        rateCriticsEl.innerHTML = `<span style="color:var(--muted-foreground);">Critic Score: NR</span>`;
-                    } else {
-                        rateCriticsEl.innerHTML = `<a href="javascript:void(0)" style="color:var(--muted-foreground);cursor:pointer;">Critic Score: ${critScore}${critCount != null ? ` · <span style="text-decoration:underline;">${critCount} reviews</span>` : ''}</a>`;
-                        rateCriticsEl.querySelector('a').onclick = () => {
-                            const con = document.createElement('div');
-                            con.style.cssText = 'display:flex;flex-direction:column;gap:1.5rem;';
-                            if (reviews.length === 0) {
-                                con.innerHTML =
-                                    '<div style="text-align:center;padding:2rem;color:var(--muted-foreground);">No reviews found.</div>';
-                            }
-                            for (const review of reviews) {
-                                const reviewdiv = document.createElement('div');
-                                reviewdiv.style.cssText =
-                                    'display:flex;gap:1rem;padding-bottom:1rem;border-bottom:1px solid var(--border);';
-                                const publication = decodeHtml(review.publication || 'Unknown Publication');
-                                const author = decodeHtml(review.author || '');
-                                const quote = decodeHtml(review.text || 'No review text available.');
-                                reviewdiv.innerHTML = `
-                                <img crossorigin="anonymous" src="${review.image || ''}" width="50" height="50" style="border-radius:8px;object-fit:cover;background:var(--highlight);flex-shrink:0;"
-                                     onerror="this.src='images/monochrome_logo.svg';this.onerror=null;" loading="lazy" referrerpolicy="no-referrer">
-                                <div style="flex:1;">
-                                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.25rem;">
-                                        <div class="pub-name" style="font-weight:600;color:var(--foreground);"></div>
-                                        <div style="font-weight:bold;color:var(--primary-foreground);background:var(--primary);padding:2px 10px;border-radius:6px;font-size:0.85rem;">${aotyScore(review.score) ?? ''}</div>
-                                    </div>
-                                    <div class="author-name" style="font-size:0.8rem;color:var(--muted-foreground);margin-bottom:0.5rem;"></div>
-                                    <div class="quote-text" style="font-size:0.95rem;line-height:1.5;color:var(--muted-foreground);font-style:italic;"></div>
-                                </div>`;
-                                reviewdiv.querySelector('.pub-name').textContent = publication;
-                                if (author) reviewdiv.querySelector('.author-name').textContent = `By ${author}`;
-                                else reviewdiv.querySelector('.author-name').remove();
-                                reviewdiv.querySelector('.quote-text').textContent = `"${quote}"`;
-                                con.appendChild(reviewdiv);
-                            }
-                            createModal({
-                                title: `Critic Reviews · ${critScore}`,
-                                content: con,
-                                className: 'extra-wide',
-                            });
-                        };
-                    }
-
-                    // User score, spec: integer|null, live: "80" | "NR" | null
-                    const userScore = aotyScore(data.userScore);
-                    const userCount = aotyCount(data.userCount);
-                    if (userScore == null) {
-                        rateUsersEl.innerHTML = `<span style="color:var(--muted-foreground);">User Score: NR</span>`;
-                    } else {
-                        const userLink = aotyUrl ? `href="${aotyUrl}" target="_blank" rel="noopener"` : '';
-                        rateUsersEl.innerHTML = `<a ${userLink} style="color:var(--muted-foreground);">User Score: <span style="text-decoration:underline;">${userScore}</span>${userCount != null ? ` · ${userCount} ratings` : ''}</a>`;
-                    }
-                })
-                .catch(() => {
-                    rateCriticsEl.innerHTML = `<span style="color:var(--muted-foreground);">Unable to fetch critic score</span>`;
-                    rateUsersEl.innerHTML = `<span style="color:var(--muted-foreground);">Unable to fetch user score</span>`;
-                });
+            // Album ratings came from a third-party AOTY worker; not used in Volna.
 
             tracklistContainer.innerHTML = `
                 <div class="track-list-header">
@@ -6176,7 +6026,7 @@ export class UIRenderer {
 
             const totalDuration = calculateTotalDuration(tracks);
             metaEl.textContent = `${tracks.length} tracks • ${formatDuration(totalDuration)}`;
-            descEl.innerHTML = `${mix.subTitle}`;
+            descEl.textContent = mix.subTitle || '';
 
             tracklistContainer.innerHTML = TRACKLIST_HEADER_WITH_LIKE_COL_HTML;
 
@@ -6519,7 +6369,7 @@ export class UIRenderer {
             this.adjustTitleFontSize(nameEl, artist.name);
 
             metaEl.innerHTML = `
-                <span>${artist.popularity}% Popularity</span>
+                ${typeof artist.popularity === 'number' ? `<span>${artist.popularity}% Popularity</span>` : ''}
                 <div class="artist-tags">
                     ${(artist.artistRoles || [])
                         .filter((role) => role.category)
@@ -7363,79 +7213,6 @@ export class UIRenderer {
             },
             { offset: Number.NEGATIVE_INFINITY }
         ).element;
-    }
-
-    renderApiSettings() {
-        const container = document.getElementById('api-instance-list');
-        Promise.allSettled([this.api.settings.getInstances('api'), this.api.settings.getInstances('streaming')])
-            .then((results) => {
-                const apiInstances = results[0].status === 'fulfilled' ? results[0].value : [];
-                const streamingInstances = results[1].status === 'fulfilled' ? results[1].value : [];
-                const renderGroup = (instances, type) => {
-                    const groupLabels = {
-                        api: 'API Instances',
-                        streaming: 'Streaming Instances',
-                    };
-
-                    const listHtml = (instances || [])
-                        .map((instance, index) => {
-                            const isObject = instance && typeof instance === 'object';
-                            const instanceUrl = isObject ? instance.url || '' : String(instance || '');
-                            const instanceName = isObject
-                                ? instance.name || instance.displayName || instance.id || instanceUrl
-                                : instanceUrl;
-                            const instanceVersion = isObject && instance.version ? String(instance.version) : '';
-                            const isUser = isObject && instance.isUser;
-                            const safeName = escapeHtml(instanceName || 'Unknown instance');
-                            const safeUrl = escapeHtml(instanceUrl || '');
-                            const safeVersion = escapeHtml(instanceVersion);
-
-                            return `
-                        <li data-index="${index}" data-type="${type}" data-url="${safeUrl}">
-                            <div style="flex: 1; min-width: 0;">
-                                <div class="instance-url">${safeName} ${isUser ? '<span style="font-size: 0.6rem; opacity: 0.7; background: var(--muted); padding: 1px 4px; border-radius: 3px; margin-left: 4px; vertical-align: middle;">U</span>' : ''}</div>
-                                ${safeUrl && safeUrl !== safeName ? `<div style="font-size: 0.8rem; color: var(--muted-foreground); margin-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${safeUrl}</div>` : ''}
-                                ${safeVersion ? `<div style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.1rem;">v${safeVersion}</div>` : ''}
-                            </div>
-                            <div class="controls">
-                                ${
-                                    isUser
-                                        ? `
-                                <button class="delete-instance" title="Delete Instance">
-                                    ${SVG_TRASH(16)}
-                                </button>`
-                                        : ''
-                                }
-                            </div>
-                        </li>
-                    `;
-                        })
-                        .join('');
-
-                    return `
-                    <li class="group-header" style="display: flex; justify-content: space-between; align-items: center; font-weight: bold; padding: 1rem 0 0.5rem; background: transparent; border: none;">
-                        <span>${groupLabels[type] || type + ' Instances'}</span>
-                        <button class="add-instance" data-type="${type}" title="Add Custom Instance" style="background: var(--primary); color: var(--primary-foreground); border: none; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; cursor: pointer; pointer-events: auto;">
-                            Add
-                        </button>
-                    </li>
-                    ${listHtml}
-                `;
-                };
-
-                container.innerHTML =
-                    renderGroup(apiInstances, 'api') +
-                    (streamingInstances && streamingInstances.length > 0
-                        ? renderGroup(streamingInstances, 'streaming')
-                        : '');
-
-                const stats = this.api.getCacheStats();
-                const cacheInfo = document.getElementById('cache-info');
-                if (cacheInfo) {
-                    cacheInfo.textContent = `Cache: ${stats.memoryEntries}/${stats.maxSize} entries`;
-                }
-            })
-            .catch(console.error);
     }
 
     async renderTrackPage(trackId, provider = null) {

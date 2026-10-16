@@ -1,0 +1,45 @@
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "port": 41234,
+      "protocol": "socks",
+      "settings": {
+        "auth": "password",
+        "accounts": [{ "user": "volna", "pass": "secret" }],
+        "udp": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "203.0.113.10",
+            "port": 443,
+            "users": [
+              { "id": "92cc34c0-f305-4528-9473-28bf84c6862b", "encryption": "none" }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": { "path": "/api/v1", "mode": "auto" },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.microsoft.com",
+          "fingerprint": "chrome",
+          "publicKey": "wigF4NuMt2kUCb5_gX1rosrHLsVAjNkWx6JhM9ntJ_s",
+          "shortId": "41e126e9ee78dfbb",
+          "spiderX": "/"
+        }
+      }
+    }
+  ]
+}

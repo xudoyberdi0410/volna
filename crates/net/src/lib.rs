@@ -3,3 +3,7 @@
 //! `vless://` link served by a bundled xray sidecar that exposes a local
 //! SOCKS port. Every outgoing request (InnerTube, audio, covers, yt-dlp's
 //! `--proxy`) uses the same exit.
+
+pub mod vless;
+
+pub use vless::{LinkError, VlessLink};

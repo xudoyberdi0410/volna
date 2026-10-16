@@ -22,10 +22,12 @@ anyhow = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+base64 = "0.22"
 volna-ytm = { workspace = true }
 volna-net = { workspace = true }
 volna-streams = { workspace = true }
 volna-wave = { workspace = true }
 
-[dev-dependencies]
-tokio = { workspace = true }

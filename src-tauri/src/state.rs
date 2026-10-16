@@ -1,11 +1,10 @@
 //! Shared app state, built once in `setup` and reached from the protocol
 //! handler and commands.
 //!
-//! Minimal on purpose: the network starts in direct mode and is not yet
-//! restored from settings. The wiring phase is expected to
-//! - load the saved `ProxyConfig` and call `net.apply(..)` after startup,
-//! - add the API (ytm) and wave services next to `streams`,
-//! - expose net status/logs/health commands.
+//! The network starts in direct mode and is not yet restored from settings.
+//! The proxy phase is expected to load the saved `ProxyConfig`, call
+//! `net.apply(..)` and then `api.refresh_http_client()`, and expose net
+//! status/logs/health commands.
 //!
 //! Audio for `<audio>` goes through the loopback server (`stream_base`),
 //! started in `lib.rs`; `volna://stream/` stays as a capped fallback for `fetch`.
@@ -15,6 +14,8 @@ use std::sync::Arc;
 
 use volna_net::{NetManager, NetOptions};
 use volna_streams::{ImageCache, StreamService, YtDlp};
+
+use crate::api_emu::ApiEmu;
 
 pub type Streams = StreamService<YtDlp, NetManager>;
 pub type Images = ImageCache<NetManager>;
@@ -27,6 +28,8 @@ pub struct AppState {
     /// `None` when yt-dlp was not found; `volna://stream/` then answers 500.
     pub streams: Option<Streams>,
     pub images: Arc<Images>,
+    /// `volna://api/` (hifi-api emulation over YouTube Music).
+    pub api: Arc<ApiEmu>,
     /// Base URL of the loopback audio server, once it is running.
     pub stream_base: Option<String>,
 }
@@ -46,10 +49,12 @@ impl AppState {
             }
         };
         let images = Arc::new(ImageCache::new(net.clone(), cache_dir.join("images")));
+        let api = Arc::new(ApiEmu::new(net.clone()));
         Ok(Self {
             net,
             streams,
             images,
+            api,
             stream_base: None,
         })
     }

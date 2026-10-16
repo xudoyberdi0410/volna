@@ -68,7 +68,7 @@ impl Target {
     }
 }
 
-/// Dispatches a protocol request. `api` still answers 501.
+/// Dispatches a protocol request.
 pub async fn handle(state: &AppState, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if request.method() == http::Method::OPTIONS {
         return with_cors(Response::builder().status(StatusCode::NO_CONTENT))
@@ -81,13 +81,7 @@ pub async fn handle(state: &AppState, request: Request<Vec<u8>>) -> Response<Vec
             media::stream(state, &target, &request).await
         }
         Some(target) if target.route == Route::Img => media::image(state, &target).await,
-        Some(target) => {
-            tracing::debug!(?target, "volna:// request (not implemented)");
-            json_error(
-                StatusCode::NOT_IMPLEMENTED,
-                &format!("{:?} {} is not implemented yet", target.route, target.path),
-            )
-        }
+        Some(target) => state.api.handle(&target).await,
         None => json_error(StatusCode::NOT_FOUND, "unknown volna:// route"),
     }
 }
@@ -159,14 +153,24 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn known_route_answers_501_json_with_cors() {
+    async fn api_errors_are_json_with_cors() {
+        // Fails before any network I/O: the id is missing.
         let req = Request::get("volna://api/info/").body(Vec::new()).unwrap();
         let res = handle(&test_state(), req).await;
-        assert_eq!(res.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert_eq!(res.headers()[header::CONTENT_TYPE], "application/json");
         assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
-        assert_eq!(body["status"], 501);
+        assert_eq!(body["status"], 400);
+    }
+
+    #[tokio::test]
+    async fn api_root_answers_without_network() {
+        let req = Request::get("volna://api/").body(Vec::new()).unwrap();
+        let res = handle(&test_state(), req).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        assert_eq!(body["Repo"], "volna");
     }
 
     #[tokio::test]

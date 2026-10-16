@@ -1,6 +1,7 @@
 //! Volna desktop app: Tauri shell that wires the `volna://` protocol to the
 //! workspace crates (`ytm`, `net`, `streams`, `wave`).
 
+mod api_emu;
 mod commands;
 mod media;
 mod protocol;
@@ -35,6 +36,9 @@ pub fn run() {
             let cache_dir = app.path().app_cache_dir()?;
             let mut state = AppState::new(&cache_dir)?;
             if let (Some(server), Some(streams)) = (audio_server, state.streams.clone()) {
+                if let Some(base) = &stream_base {
+                    state.api.set_stream_base(base.clone());
+                }
                 state.stream_base = stream_base;
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = server.serve(streams).await {

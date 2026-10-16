@@ -226,8 +226,8 @@ pub struct YtDlp {
 
 impl YtDlp {
     /// Finds yt-dlp: `explicit`, then `$VOLNA_YTDLP`, then a sidecar next to
-    /// the executable (`yt-dlp-<triple>` as in the Tauri source tree, or
-    /// `yt-dlp` as Tauri installs it), then `PATH`.
+    /// the executable (`volna-yt-dlp` as Tauri installs the bundled one, or
+    /// `volna-yt-dlp-<triple>`/`yt-dlp-<triple>`), then `yt-dlp` on `PATH`.
     pub fn locate(explicit: Option<&Path>) -> Result<Self> {
         let (binary, origin) = if let Some(p) = explicit {
             if !p.is_file() {
@@ -388,9 +388,13 @@ impl YtDlp {
 
 fn find_in(exe_dir: Option<&Path>, path_var: Option<&OsStr>) -> Option<(PathBuf, Origin)> {
     let suffix = std::env::consts::EXE_SUFFIX;
+    // Bundles install the sidecar as `volna-yt-dlp`; a plain `yt-dlp` next to
+    // the app is the distro's when the app lives in /usr/bin, so it counts
+    // as a system binary (found through PATH), not as ours to self-update.
     let sidecars = [
+        format!("volna-yt-dlp{suffix}"),
+        format!("volna-yt-dlp-{TARGET_TRIPLE}{suffix}"),
         format!("yt-dlp-{TARGET_TRIPLE}{suffix}"),
-        format!("yt-dlp{suffix}"),
     ];
     let next_to_exe = exe_dir
         .into_iter()
@@ -510,7 +514,14 @@ mod tests {
         let path_var = std::env::join_paths([&path_dir]).unwrap();
         assert_eq!(
             find_in(Some(&exe_dir), Some(&path_var)),
-            Some((on_path, Origin::System))
+            Some((on_path.clone(), Origin::System))
+        );
+
+        std::fs::write(exe_dir.join(format!("yt-dlp{suffix}")), b"").unwrap();
+        assert_eq!(
+            find_in(Some(&exe_dir), Some(&path_var)),
+            Some((on_path, Origin::System)),
+            "a plain yt-dlp next to the app is not a sidecar"
         );
 
         let sidecar = exe_dir.join(format!("yt-dlp-{TARGET_TRIPLE}{suffix}"));
@@ -518,6 +529,13 @@ mod tests {
         assert_eq!(
             find_in(Some(&exe_dir), Some(&path_var)),
             Some((sidecar, Origin::Sidecar))
+        );
+
+        let bundled = exe_dir.join(format!("volna-yt-dlp{suffix}"));
+        std::fs::write(&bundled, b"").unwrap();
+        assert_eq!(
+            find_in(Some(&exe_dir), Some(&path_var)),
+            Some((bundled, Origin::Sidecar))
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

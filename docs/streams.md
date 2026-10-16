@@ -57,7 +57,7 @@ contract's `volna://api/image/` route can delegate to `AppState::images`.
 ## Resolving
 
 - yt-dlp is looked up as `$VOLNA_YTDLP`, then a sidecar next to the executable
-  (`yt-dlp-<triple>`, or `yt-dlp` once installed), then `PATH`.
+  (`volna-yt-dlp` once installed, or `volna-yt-dlp-<triple>`/`yt-dlp-<triple>`), then `PATH`.
 - It runs as `--ignore-config --no-playlist -J -f 'bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio'`,
   plus `--proxy <NetManager::proxy_url>` when not in direct mode.
 - Results are cached per (videoId, quality) until `expire − 5 min`. The cache also tracks the

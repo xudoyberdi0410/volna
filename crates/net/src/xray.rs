@@ -76,8 +76,12 @@ impl LogBuffer {
 }
 
 /// Finds the xray binary: an explicit path, then `$VOLNA_XRAY`, then a
-/// sidecar next to the running executable (`xray-<triple>` as in the Tauri
-/// source tree, or plain `xray` as Tauri installs it), then `PATH`.
+/// sidecar next to the running executable (`volna-xray` as Tauri installs
+/// the bundled one, or `volna-xray-<triple>`/`xray-<triple>` as in a source
+/// tree), then `xray` on `PATH`.
+///
+/// A plain `xray` next to the executable is not treated as ours: a deb puts
+/// the app in /usr/bin, where that is the distro's xray.
 pub fn find_xray(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return if p.is_file() {
@@ -101,8 +105,9 @@ pub fn find_xray(explicit: Option<&Path>) -> Result<PathBuf> {
 fn resolve_xray_in(exe_dir: Option<&Path>, path_var: Option<&OsStr>) -> Option<PathBuf> {
     let suffix = std::env::consts::EXE_SUFFIX;
     let sidecars = [
+        format!("volna-xray{suffix}"),
+        format!("volna-xray-{TARGET_TRIPLE}{suffix}"),
         format!("xray-{TARGET_TRIPLE}{suffix}"),
-        format!("xray{suffix}"),
     ];
 
     let next_to_exe = exe_dir
@@ -326,20 +331,27 @@ mod tests {
             Some(on_path.clone())
         );
 
-        // Installed sidecar (plain name) wins over PATH.
-        let plain = exe_dir.join(format!("xray{suffix}"));
-        std::fs::write(&plain, b"").unwrap();
+        // A plain xray next to the app (/usr/bin/xray from the distro) is not ours.
+        std::fs::write(exe_dir.join(format!("xray{suffix}")), b"").unwrap();
         assert_eq!(
             resolve_xray_in(Some(&exe_dir), Some(&path_var)),
-            Some(plain)
+            Some(on_path.clone())
         );
 
-        // Dev sidecar with the target triple wins over everything.
+        // Source-tree sidecar with the target triple wins over PATH.
         let triple = exe_dir.join(format!("xray-{TARGET_TRIPLE}{suffix}"));
         std::fs::write(&triple, b"").unwrap();
         assert_eq!(
             resolve_xray_in(Some(&exe_dir), Some(&path_var)),
             Some(triple)
+        );
+
+        // The installed bundle sidecar wins over everything.
+        let bundled = exe_dir.join(format!("volna-xray{suffix}"));
+        std::fs::write(&bundled, b"").unwrap();
+        assert_eq!(
+            resolve_xray_in(Some(&exe_dir), Some(&path_var)),
+            Some(bundled)
         );
 
         assert_eq!(resolve_xray_in(None, None), None);

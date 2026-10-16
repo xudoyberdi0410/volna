@@ -3,3 +3,4 @@ node_modules/
 /ui/dist/
 /src-tauri/gen/schemas/
 *.log
+/src-tauri/binaries/

@@ -28,7 +28,6 @@ import './commandPalette.js';
 import './network-settings.js';
 import { initWave } from './wave.js';
 import { installPlaybackFailureHandler } from './playback-failures.js';
-import { initTracker } from './tracker.js';
 import {
     parseCSV,
     parseJSPF,
@@ -268,21 +267,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Haptic feedback on every click
     document.addEventListener('click', () => hapticLight(), { capture: true });
 
-    // Populate commit info
+    // Populate commit info (Volna's own commit, not upstream Monochrome's)
     {
-        const repo = 'https://github.com/monochrome-music/monochrome';
         // eslint-disable-next-line no-undef
         const hash = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev';
-        const commitLink =
-            hash !== 'dev' && hash !== 'unknown'
-                ? `<a href="${repo}/commit/${hash}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">${hash}</a>`
-                : hash;
-        const repoLink = `<a href="${repo}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">monochrome-music/monochrome</a>`;
-        const html = `Commit ${commitLink} · ${repoLink}`;
+        const text = `Сборка ${hash}`;
         const aboutEl = document.getElementById('about-commit-info');
         const settingsEl = document.getElementById('settings-commit-info');
-        if (aboutEl) aboutEl.innerHTML = html;
-        if (settingsEl) settingsEl.innerHTML = html;
+        if (aboutEl) aboutEl.textContent = text;
+        if (settingsEl) settingsEl.textContent = text;
     }
 
     new ThemeStore();
@@ -297,8 +290,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (currentQuality !== storedQuality) localStorage.setItem('playback-quality', currentQuality);
     await Player.initialize(audioPlayer, MusicAPI.instance, currentQuality);
 
-    // Initialize tracker
-    initTracker().catch(console.error);
+    // The ArtistGrid unreleased tracker is not loaded: it fetched a CSV
+    // straight from artistgrid.cx, bypassing the app's proxy.
 
     await UIRenderer.initialize(MusicAPI.instance, Player.instance);
 
@@ -2022,27 +2015,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return true;
         }
 
-        const isExternalLink =
-            query.includes('monochrome.tf/') ||
-            query.includes('monochrome.samidy.com/') ||
-            query.includes('tidal.com/');
-
-        if (isExternalLink) {
-            const url = query.startsWith('http') ? query : 'https://' + query;
-            try {
-                const urlObj = new URL(url);
-                let path = urlObj.pathname;
-                path = path.replace(/\/+$/, '');
-                const segments = path.split('/').filter((s) => s);
-                if (segments.length >= 2) {
-                    path = '/' + segments[0] + '/' + segments[1];
-                }
-                navigate(path);
-                return true;
-            } catch {
-                return false;
-            }
-        }
+        // TIDAL and Monochrome links carry TIDAL ids, which mean nothing here.
         return false;
     };
 

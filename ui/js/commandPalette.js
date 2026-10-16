@@ -157,16 +157,6 @@ class CommandPalette {
                 },
             },
             {
-                id: 'nav-unreleased',
-                group: 'Navigation',
-                icon: 'calendar',
-                label: 'Go to Unreleased',
-                keywords: ['unreleased', 'upcoming', 'tracker'],
-                action: () => {
-                    navigate('/unreleased');
-                },
-            },
-            {
                 id: 'nav-settings',
                 group: 'Navigation',
                 icon: 'settings',
@@ -185,16 +175,6 @@ class CommandPalette {
                 keywords: ['about', 'version', 'credits'],
                 action: () => {
                     navigate('/about');
-                },
-            },
-            {
-                id: 'nav-donate',
-                group: 'Navigation',
-                icon: 'handHeart',
-                label: 'Go to Donate',
-                keywords: ['donate', 'support', 'contribute'],
-                action: () => {
-                    navigate('/donate');
                 },
             },
 

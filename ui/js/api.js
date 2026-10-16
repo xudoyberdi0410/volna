@@ -967,53 +967,12 @@ export class LosslessAPI {
         return result;
     }
 
-    async getArtistSocials(artistName) {
-        const cacheKey = `artist_socials_${artistName}`;
-        const cached = await this.cache.get('artist', cacheKey);
-        if (cached) return cached;
-
-        try {
-            const searchUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:${encodeURIComponent(artistName)}&fmt=json`;
-            const searchRes = await fetch(searchUrl, {
-                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
-            });
-            const searchData = await searchRes.json();
-
-            if (!searchData.artists || searchData.artists.length === 0) return [];
-
-            const artist = searchData.artists[0];
-            const mbid = artist.id;
-
-            const detailsUrl = `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels&fmt=json`;
-            const detailsRes = await fetch(detailsUrl, {
-                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
-            });
-            const detailsData = await detailsRes.json();
-
-            const links = [];
-            if (detailsData.relations) {
-                for (const rel of detailsData.relations) {
-                    if (
-                        [
-                            'social network',
-                            'streaming',
-                            'official homepage',
-                            'youtube',
-                            'soundcloud',
-                            'bandcamp',
-                        ].includes(rel.type)
-                    ) {
-                        links.push({ type: rel.type, url: rel.url.resource });
-                    }
-                }
-            }
-
-            await this.cache.set('artist', cacheKey, links);
-            return links;
-        } catch (e) {
-            console.warn('Failed to fetch artist socials:', e);
-            return [];
-        }
+    /**
+     * Artist links came from MusicBrainz, called straight from the webview.
+     * Volna sends all traffic through Rust (and its proxy), so there are none.
+     */
+    async getArtistSocials(_artistName) {
+        return [];
     }
 
     async getArtist(artistId, options = {}) {
@@ -1244,14 +1203,14 @@ export class LosslessAPI {
                 if (data && data.text) {
                     const bio = {
                         text: data.text,
-                        source: data.source || 'Tidal',
+                        source: data.source || 'YouTube Music',
                     };
                     await this.cache.set('artist', cacheKey, bio);
                     return bio;
                 }
             }
         } catch (e) {
-            console.warn('Failed to fetch Tidal biography:', e);
+            console.warn('Failed to fetch artist biography:', e);
         }
         return null;
     }

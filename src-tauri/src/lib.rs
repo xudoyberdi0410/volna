@@ -78,6 +78,7 @@ pub fn run() {
             network::net_validate,
             network::net_health,
             network::net_audio_check,
+            network::net_set_cookies,
             network::net_xray_logs,
             wave::wave_status,
             wave::wave_set_settings,

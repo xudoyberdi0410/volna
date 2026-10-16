@@ -1,8 +1,8 @@
 //! Persistent app settings owned by Rust (as opposed to the UI's localStorage).
 //!
-//! Lives in `<app config dir>/settings.json`. Only the network setting is
-//! stored for now; unknown fields are kept out of the way by `serde(default)`
-//! so older and newer files both load.
+//! Lives in `<app config dir>/settings.json`: the network setting and where
+//! yt-dlp takes YouTube cookies from. Missing fields fall back to defaults
+//! (`serde(default)`), so older and newer files both load.
 
 use std::fs;
 use std::io::{self, Write};
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use volna_net::ProxyConfig;
+use volna_streams::Cookies;
 
 pub const FILE_NAME: &str = "settings.json";
 
@@ -18,6 +19,8 @@ pub const FILE_NAME: &str = "settings.json";
 pub struct Settings {
     /// How the app reaches the internet; applied on startup.
     pub network: ProxyConfig,
+    /// Cookies for yt-dlp (helps against YouTube's bot check); applied on startup.
+    pub ytdlp_cookies: Cookies,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,7 +131,10 @@ mod tests {
             ProxyConfig::Url("socks5h://u:p@127.0.0.1:1080".into()),
             ProxyConfig::Vless("vless://id@example.com:443?security=reality&pbk=x".into()),
         ] {
-            let settings = Settings { network };
+            let settings = Settings {
+                network,
+                ytdlp_cookies: Cookies::File("/home/u/cookies.txt".into()),
+            };
             store.save(&settings).unwrap();
             assert_eq!(store.load().unwrap(), settings);
         }
@@ -150,6 +156,8 @@ mod tests {
             store.load().unwrap().network,
             ProxyConfig::Url("http://127.0.0.1:8080".into())
         );
+        // Files from before the cookie setting load with no cookies.
+        assert_eq!(store.load().unwrap().ytdlp_cookies, Cookies::None);
         fs::write(store.path(), "{}").unwrap();
         assert_eq!(store.load().unwrap().network, ProxyConfig::Direct);
         fs::remove_dir_all(dir).unwrap();

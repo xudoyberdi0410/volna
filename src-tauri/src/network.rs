@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::State;
 use volna_net::{HealthReport, NetStatus, ProxyConfig};
+use volna_streams::Cookies;
 
 use crate::settings::SettingsStore;
 use crate::state::AppState;
@@ -60,7 +61,14 @@ impl NetworkState {
                 return;
             }
         };
-        tracing::info!(path = %self.store.path().display(), network = ?settings.network, "restoring settings");
+        tracing::info!(path = %self.store.path().display(), network = ?settings.network, cookies = ?settings.ytdlp_cookies, "restoring settings");
+        if let Some(streams) = &app.streams
+            && let Err(e) = streams.backend().set_cookies(settings.ytdlp_cookies)
+        {
+            // E.g. the cookies file was moved: play without cookies.
+            tracing::error!("cannot apply the saved yt-dlp cookies: {e}");
+            self.set_startup_error(Some(e.to_string()));
+        }
         if settings.network == ProxyConfig::Direct {
             return;
         }
@@ -79,6 +87,21 @@ impl NetworkState {
         settings.network = config;
         self.store.save(&settings).map_err(|e| e.to_string())?;
         Ok(app.net.status())
+    }
+
+    /// Switches yt-dlp's cookie source and saves it. Cached stream URLs and
+    /// failures are dropped so the next play tries again with the cookies.
+    pub async fn set_cookies(&self, app: &AppState, cookies: Cookies) -> CmdResult<()> {
+        let _guard = self.applying.lock().await;
+        let streams = app.streams.as_ref().ok_or("yt-dlp not found")?;
+        streams
+            .backend()
+            .set_cookies(cookies.clone())
+            .map_err(|e| e.to_string())?;
+        streams.clear_cache();
+        let mut settings = self.store.load().unwrap_or_default();
+        settings.ytdlp_cookies = cookies;
+        self.store.save(&settings).map_err(|e| e.to_string())
     }
 }
 
@@ -99,6 +122,8 @@ pub struct NetSettingsView {
     config: ProxyConfig,
     status: NetStatus,
     startup_error: Option<String>,
+    /// Where yt-dlp takes YouTube cookies from.
+    cookies: Cookies,
 }
 
 #[tauri::command]
@@ -107,7 +132,23 @@ pub fn net_settings(app: State<'_, AppState>, net: State<'_, NetworkState>) -> N
         config: app.net.config(),
         status: app.net.status(),
         startup_error: net.startup_error(),
+        cookies: app
+            .streams
+            .as_ref()
+            .map(|s| s.backend().cookies())
+            .unwrap_or_default(),
     }
+}
+
+/// `cookies` is `{"mode":"none"}`, `{"mode":"browser","value":"firefox"}`
+/// or `{"mode":"file","value":"/path/cookies.txt"}`.
+#[tauri::command]
+pub async fn net_set_cookies(
+    app: State<'_, AppState>,
+    net: State<'_, NetworkState>,
+    cookies: Cookies,
+) -> CmdResult<()> {
+    net.set_cookies(&app, cookies).await
 }
 
 /// `config` is `{"mode":"direct"}` or `{"mode":"url"|"vless","value":"..."}`.
@@ -231,6 +272,31 @@ mod tests {
         assert_eq!(app.net.config(), ProxyConfig::Direct);
         assert_eq!(store.load().unwrap(), Settings::default());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn cookies_are_saved_and_restored() {
+        let (dir, store) = temp_store("cookies");
+        let net = NetworkState::new(store.clone());
+        let app = app();
+        if app.streams.is_none() {
+            return; // no yt-dlp on this machine
+        }
+        let cookies = Cookies::Browser("firefox".into());
+        net.set_cookies(&app, cookies.clone()).await.unwrap();
+        assert_eq!(store.load().unwrap().ytdlp_cookies, cookies);
+        // A bad value is rejected and the saved one stays.
+        assert!(
+            net.set_cookies(&app, Cookies::Browser("bogus".into()))
+                .await
+                .is_err()
+        );
+        assert_eq!(store.load().unwrap().ytdlp_cookies, cookies);
+
+        let app2 = AppState::new(&dir.join("cache")).unwrap();
+        NetworkState::new(store).restore(&app2).await;
+        assert_eq!(app2.streams.unwrap().backend().cookies(), cookies);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

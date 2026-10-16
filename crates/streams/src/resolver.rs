@@ -107,6 +107,15 @@ impl<B: Backend> Resolver<B> {
         }
     }
 
+    /// Forgets every cached URL, e.g. after the network setting changed
+    /// (googlevideo URLs only work from the exit IP they were resolved on).
+    /// Resolves already running finish into their own, now detached, slot.
+    pub fn clear(&self) {
+        let mut slots = self.lock_slots();
+        tracing::debug!(entries = slots.len(), "clearing the stream URL cache");
+        slots.clear();
+    }
+
     /// Number of keys with a slot (cached or resolving). For tests and stats.
     pub fn len(&self) -> usize {
         self.lock_slots().len()
@@ -269,6 +278,16 @@ mod tests {
         r.invalidate(&id(), Quality::High, &first.url).await;
         let second = r.get(&id(), Quality::High, None).await.unwrap();
         assert_ne!(second.url, first.url);
+        assert_eq!(r.backend().calls(), 2);
+    }
+
+    #[tokio::test]
+    async fn clear_forces_resolve() {
+        let r = Resolver::new(Fake::new(Duration::from_secs(3600)));
+        r.get(&id(), Quality::High, None).await.unwrap();
+        r.clear();
+        assert!(r.is_empty());
+        r.get(&id(), Quality::High, None).await.unwrap();
         assert_eq!(r.backend().calls(), 2);
     }
 

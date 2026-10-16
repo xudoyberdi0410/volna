@@ -177,6 +177,11 @@ impl<B: Backend, N: Network> StreamService<B, N> {
         self.inner.resolver.get(id, quality, proxy.as_deref()).await
     }
 
+    /// Drops every cached stream URL. Call after switching the network.
+    pub fn clear_cache(&self) {
+        self.inner.resolver.clear();
+    }
+
     /// Resolves `id` in the background so the next track starts instantly.
     /// Must be called inside a tokio runtime.
     pub fn prefetch(&self, id: VideoId, quality: Quality) {

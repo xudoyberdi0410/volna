@@ -13,6 +13,8 @@
 
 mod cache;
 mod endpoints;
+#[cfg(test)]
+mod live;
 mod proxy;
 pub mod shape;
 

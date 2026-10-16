@@ -1,0 +1,29 @@
+[package]
+name = "volna"
+description = "Desktop YouTube Music player with My Wave"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "volna_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+volna-ytm = { workspace = true }
+volna-net = { workspace = true }
+volna-streams = { workspace = true }
+volna-wave = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

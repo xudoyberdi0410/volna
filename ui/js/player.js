@@ -192,16 +192,22 @@ export class Player {
     async _initShaka() {
         try {
             const waitForImagesLoading = () => {
-                const images = Array.from(document.images).filter((img) => !img.complete);
+                // Lazy images below the fold never finish loading, so they must
+                // not hold up playback; the rest get at most 3 s.
+                const images = Array.from(document.images).filter((img) => !img.complete && img.loading !== 'lazy');
                 if (images.length === 0) return Promise.resolve();
-                return Promise.all(
-                    images.map(
-                        (img) =>
-                            new Promise((res) => {
-                                img.onload = img.onerror = res;
-                            })
-                    )
-                );
+                return Promise.race([
+                    Promise.all(
+                        images.map(
+                            (img) =>
+                                new Promise((res) => {
+                                    img.addEventListener('load', res, { once: true });
+                                    img.addEventListener('error', res, { once: true });
+                                })
+                        )
+                    ),
+                    new Promise((res) => setTimeout(res, 3000)),
+                ]);
             };
 
             if (document.readyState !== 'complete') {

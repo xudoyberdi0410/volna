@@ -1,0 +1,36 @@
+# Локальный пакет для Arch/CachyOS: собирает Volna из этого же репозитория.
+# Сборка: cd packaging/arch && makepkg -si
+pkgname=volna
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
+arch=('x86_64')
+license=('Apache-2.0')
+depends=('webkit2gtk-4.1' 'gtk3' 'yt-dlp' 'deno' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav')
+optdepends=('xray: режим VLESS в настройках сети')
+makedepends=('cargo')  # + bun (стоит вне pacman)
+options=('!lto' '!debug')
+
+_root="$(realpath "$startdir/../..")"
+
+build() {
+  cd "$_root/ui"
+  bun install --frozen-lockfile
+  bun run tauri build --no-bundle
+}
+
+package() {
+  install -Dm755 "$_root/target/release/volna" "$pkgdir/usr/bin/volna"
+  install -Dm644 "$_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/volna.png"
+  install -Dm644 "$_root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/volna.png"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/volna.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=Volna
+Comment=YouTube Music с «Моей волной»
+Exec=volna
+Icon=volna
+Categories=AudioVideo;Audio;Player;
+StartupWMClass=volna
+DESK
+}

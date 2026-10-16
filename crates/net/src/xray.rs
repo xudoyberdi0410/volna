@@ -153,6 +153,8 @@ impl XrayProcess {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
+        #[cfg(target_os = "linux")]
+        die_with_parent(&mut cmd);
 
         let mut child = cmd.spawn().map_err(|source| NetError::XraySpawn {
             path: binary.to_path_buf(),
@@ -263,6 +265,31 @@ async fn pump_lines(stream: impl AsyncRead + Unpin, logs: LogBuffer) {
     while let Ok(Some(line)) = lines.next_line().await {
         tracing::debug!(target: "volna_net::xray_log", "{line}");
         logs.push(line);
+    }
+}
+
+/// kill_on_drop only helps when the app exits normally. If it is killed
+/// (SIGKILL, a crash, `tauri dev` restarting it), xray would keep running
+/// and hold its port, so ask the kernel to SIGKILL it when we die.
+///
+/// The signal fires when the *thread* that spawned the child exits; spawns
+/// happen on tokio worker threads, which live as long as the runtime.
+#[cfg(target_os = "linux")]
+fn die_with_parent(cmd: &mut Command) {
+    // SAFETY: the closure runs between fork and exec and only calls
+    // async-signal-safe functions (prctl, getppid).
+    let parent = std::process::id() as libc::pid_t;
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // The parent may have died before prctl took effect.
+            if libc::getppid() != parent {
+                return Err(std::io::Error::other("parent exited before xray started"));
+            }
+            Ok(())
+        });
     }
 }
 

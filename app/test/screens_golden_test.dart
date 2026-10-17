@@ -56,6 +56,19 @@ Future<FakeTransport> _daemon({bool wave = true, bool playing = false}) async {
     await addCover(t, c.$1, c.$2, c.$3);
   }
   t.on('library_is_liked', (a) => {for (final id in a['ids'] as List) id as String: id == 'vid_u1'});
+  // The likes provider loads the liked ids with library_get.
+  t.on('library_get', (a) => a['kind'] != 'track'
+      ? const []
+      : [
+          {
+            'item': {
+              'type': 'track', 'video_id': 'vid_u1', 'title': 'Полуночный экспресс', 'artists': const [],
+              'album': null, 'duration_s': 214, 'thumbnails': const [], 'explicit': false, 'kind': 'song',
+              'year': null, 'views': null, 'playable': true,
+            },
+            'addedAt': kTestNow,
+          },
+        ]);
   t.on('lyrics_get', (_) => _lyrics);
   t.on('lyrics_sources', (_) => [
         {'source': 'lrc.red', 'synced': 'word', 'lines': 8},

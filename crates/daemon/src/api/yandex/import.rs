@@ -220,7 +220,13 @@ pub async fn match_library<C: Catalog>(
             }
             m
         },
-        |done, t| report("tracks", done, format!("{} — {}", artist_line(t), t.full_title())),
+        |done, t| {
+            report(
+                "tracks",
+                done,
+                format!("{} — {}", artist_line(t), t.full_title()),
+            )
+        },
     )
     .await;
     let mut out = Matched {
@@ -346,7 +352,13 @@ fn imported_order(imported: &[Track], current: Vec<String>) -> Vec<String> {
     let mut keyed: Vec<(usize, usize, String)> = current
         .into_iter()
         .enumerate()
-        .map(|(i, id)| (rank.get(id.as_str()).copied().unwrap_or(imported.len()), i, id))
+        .map(|(i, id)| {
+            (
+                rank.get(id.as_str()).copied().unwrap_or(imported.len()),
+                i,
+                id,
+            )
+        })
         .collect();
     keyed.sort_by_key(|&(r, i, _)| (r, i));
     keyed.into_iter().map(|(_, _, id)| id).collect()
@@ -418,14 +430,16 @@ pub(crate) mod tests {
     use crate::api::yandex::matching::tests::{FakeCatalog, track, ytrack};
     use volna_ytm::{Item, SearchFilter};
 
+    /// (id, title, source, video ids)
+    pub type MemPlaylist = (String, String, String, Vec<String>);
+
     /// The library in memory, as `api/library.rs` will behave.
     #[derive(Default)]
     pub struct MemorySink {
         pub likes: Mutex<Vec<(String, i64)>>,
         pub albums: Mutex<Vec<String>>,
         pub artists: Mutex<Vec<String>>,
-        /// (id, title, source, video ids)
-        pub playlists: Mutex<Vec<(String, String, String, Vec<String>)>>,
+        pub playlists: Mutex<Vec<MemPlaylist>>,
     }
 
     impl LibrarySink for MemorySink {
@@ -498,7 +512,10 @@ pub(crate) mod tests {
             parse_iso_ms("2024-01-01T03:00:00.5+03:00"),
             Some(1_704_067_200_500)
         );
-        assert_eq!(parse_iso_ms("2024-02-29T00:00:00Z"), Some(1_709_164_800_000));
+        assert_eq!(
+            parse_iso_ms("2024-02-29T00:00:00Z"),
+            Some(1_709_164_800_000)
+        );
         assert_eq!(parse_iso_ms("yesterday"), None);
         assert_eq!(parse_iso_ms(""), None);
     }
@@ -518,7 +535,10 @@ pub(crate) mod tests {
         Library {
             login: None,
             liked_tracks: vec![
-                liked(ytrack("One", None, &["A"], None), Some("2024-01-02T00:00:00Z")),
+                liked(
+                    ytrack("One", None, &["A"], None),
+                    Some("2024-01-02T00:00:00Z"),
+                ),
                 liked(ytrack("Two", None, &["A"], None), None),
                 liked(ytrack("Gone", None, &["A"], None), None),
             ],
@@ -537,7 +557,9 @@ pub(crate) mod tests {
     }
 
     fn catalog() -> FakeCatalog {
-        let hit = |id: &str, title: &str, artist: &str| vec![Item::Track(track(id, title, &[artist], None))];
+        let hit = |id: &str, title: &str, artist: &str| {
+            vec![Item::Track(track(id, title, &[artist], None))]
+        };
         FakeCatalog::default()
             .with(SearchFilter::Songs, "A One", hit("v1", "One", "A"))
             .with(SearchFilter::Songs, "A Two", hit("v2", "Two", "A"))

@@ -26,8 +26,8 @@ use tokio::sync::watch;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use browser::desktop_state;
-pub use import::{LibrarySink, Miss, Options, Progress, Summary};
 use client::{ApiError, Client, Library};
+pub use import::{LibrarySink, Miss, Options, Progress, Summary};
 use matching::Catalog;
 
 /// Sends a daemon event (`name`, payload) to the window.
@@ -123,12 +123,12 @@ impl YandexState {
     /// `#access_token=`; checked with Yandex before it is kept.
     pub async fn set_token_input(&self, input: &str) -> Result<Status, String> {
         let token = client::token_from_input(input)
-            .ok_or_else(|| "в строке нет токена Яндекса".to_owned())?;
+            .ok_or_else(|| "bad_args: в строке нет токена Яндекса".to_owned())?;
         let account = Client::new(token.clone())
-            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("internal: {e}"))?
             .account()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("upstream: {e}"))?;
         self.set_token(Some(token));
         Ok(Status {
             signed_in: true,
@@ -192,7 +192,8 @@ impl YandexState {
     /// The token, the library, matching, saving. A cancel drops this at an
     /// await; saving has none, so it is never cut in half.
     async fn run<C: Catalog>(&self, catalog: &C, emit: &Emit, options: Options) -> Done {
-        let progress = |p: Progress| emit(EVENT_PROGRESS, serde_json::to_value(p).unwrap_or_default());
+        let progress =
+            |p: Progress| emit(EVENT_PROGRESS, serde_json::to_value(p).unwrap_or_default());
         let library = match self.library(emit, options).await {
             Ok(l) => l,
             Err(done) => return done,
@@ -267,6 +268,49 @@ impl YandexState {
             }
         }
     }
+}
+
+/// The `yandex_*` commands; `None` for any other. `emit` is only called by
+/// `yandex_import_start`. Errors: `bad_args`, `upstream` (Yandex refused or is
+/// unreachable), `busy` (an import is running).
+pub async fn call<C: Catalog + 'static>(
+    state: &Arc<YandexState>,
+    catalog: C,
+    emit: impl FnOnce() -> Emit,
+    cmd: &str,
+    a: &Value,
+) -> Option<Result<Value, String>> {
+    let r = match cmd {
+        "yandex_status" => state.status().await.map(to_value).map_err(upstream),
+        "yandex_set_token" => match a.get("token").and_then(Value::as_str) {
+            None => Err("bad_args: `token` is required".to_owned()),
+            Some(input) => state.set_token_input(input).await.map(to_value),
+        },
+        "yandex_import_start" => {
+            let options = match a {
+                Value::Null => Ok(Options::default()),
+                a => serde_json::from_value(a.clone()).map_err(|e| format!("bad_args: {e}")),
+            };
+            match options {
+                Ok(options) => state
+                    .start(catalog, emit(), options)
+                    .map(|()| serde_json::json!({ "started": true }))
+                    .map_err(|e| format!("busy: {e}")),
+                Err(e) => Err(e),
+            }
+        }
+        "yandex_import_cancel" => Ok(Value::Bool(state.cancel())),
+        _ => return None,
+    };
+    Some(r)
+}
+
+fn to_value<T: Serialize>(v: T) -> Value {
+    serde_json::to_value(v).unwrap_or_default()
+}
+
+fn upstream(e: String) -> String {
+    format!("upstream: {e}")
 }
 
 /// The sink until `api/library.rs` is merged: every write fails, so an

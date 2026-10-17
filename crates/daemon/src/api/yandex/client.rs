@@ -575,13 +575,14 @@ mod tests {
     #[test]
     fn pasted_token_or_redirect() {
         assert_eq!(
-            token_from_input(
-                " https://music.yandex.ru/#access_token=y0_AbC-1&token_type=bearer\n"
-            )
-            .as_deref(),
+            token_from_input(" https://music.yandex.ru/#access_token=y0_AbC-1&token_type=bearer\n")
+                .as_deref(),
             Some("y0_AbC-1")
         );
-        assert_eq!(token_from_input("y0_AbC-1.x").as_deref(), Some("y0_AbC-1.x"));
+        assert_eq!(
+            token_from_input("y0_AbC-1.x").as_deref(),
+            Some("y0_AbC-1.x")
+        );
         assert_eq!(token_from_input("not a token"), None);
         assert_eq!(token_from_input("  "), None);
         assert_eq!(token_from_input("https://music.yandex.ru/"), None);

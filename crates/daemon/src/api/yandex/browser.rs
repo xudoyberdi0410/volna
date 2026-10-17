@@ -133,6 +133,9 @@ mod tests {
         let sink = MemorySink::default();
         let summary = save(&sink, &library, &matched).unwrap();
         println!("{summary:?}");
-        assert!(matched.tracks.len() * 10 >= matched.total * 7, "under 70% matched");
+        assert!(
+            matched.tracks.len() * 10 >= matched.total * 7,
+            "under 70% matched"
+        );
     }
 }

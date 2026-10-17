@@ -28,6 +28,8 @@ pub struct AppState {
     pub images: Arc<Images>,
     /// `volna://api/` (hifi-api emulation over YouTube Music).
     pub api: Arc<ApiEmu>,
+    /// `color_palette` results per cover URL.
+    pub palettes: Arc<crate::api::color::Palettes>,
     /// Base URL of the loopback audio server, once it is running.
     pub stream_base: Option<String>,
 }
@@ -53,6 +55,7 @@ impl AppState {
             streams,
             images,
             api,
+            palettes: Arc::default(),
             stream_base: None,
         })
     }

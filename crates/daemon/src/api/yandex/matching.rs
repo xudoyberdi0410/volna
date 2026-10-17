@@ -28,8 +28,7 @@ pub const MIN_ARTIST_NAME_SCORE: f64 = 0.85;
 /// The YouTube Music search, as the matcher needs it. A failed search counts
 /// as no results, as in the old UI.
 pub trait Catalog: Send + Sync {
-    fn find(&self, query: &str, filter: SearchFilter)
-    -> impl Future<Output = Vec<Item>> + Send;
+    fn find(&self, query: &str, filter: SearchFilter) -> impl Future<Output = Vec<Item>> + Send;
 }
 
 impl Catalog for YtmClient {
@@ -500,7 +499,10 @@ fn same_artist_and_length<'a>(items: &[&'a Track], t: &client::Track) -> Option<
 /// The YouTube Music track for a Yandex track, or `None`.
 pub async fn match_track<C: Catalog>(catalog: &C, t: &client::Track) -> Option<Track> {
     let artist = t.artists.join(", ");
-    let length = t.duration_ms.filter(|&d| d > 0).map(|ms| ms as f64 / 1000.0);
+    let length = t
+        .duration_ms
+        .filter(|&d| d > 0)
+        .map(|ms| ms as f64 / 1000.0);
     let duration_ok = |item: &Track| match (length, duration_s(item)) {
         (Some(l), Some(d)) => (d - l).abs() <= DURATION_SLACK_S,
         _ => true,
@@ -635,7 +637,12 @@ pub(crate) mod tests {
         }
     }
 
-    pub fn ytrack(title: &str, version: Option<&str>, artists: &[&str], ms: Option<u64>) -> client::Track {
+    pub fn ytrack(
+        title: &str,
+        version: Option<&str>,
+        artists: &[&str],
+        ms: Option<u64>,
+    ) -> client::Track {
         client::Track {
             id: format!("y-{title}"),
             title: title.into(),
@@ -694,7 +701,12 @@ pub(crate) mod tests {
             ytrack("Faded", None, &["Alan Walker"], Some(212_000)),
             ytrack("Группа крови", None, &["КИНО"], Some(286_000)),
             ytrack("Shape of You", None, &["Ed Sheeran"], Some(233_000)),
-            ytrack("Despacito", Some("Remix"), &["Luis Fonsi", "Daddy Yankee", "Justin Bieber"], Some(228_000)),
+            ytrack(
+                "Despacito",
+                Some("Remix"),
+                &["Luis Fonsi", "Daddy Yankee", "Justin Bieber"],
+                Some(228_000),
+            ),
         ];
         let mut found = 0;
         for t in &cases {
@@ -706,7 +718,10 @@ pub(crate) mod tests {
                 m.as_ref().map(|m| (
                     &m.video_id,
                     &m.title,
-                    m.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>()
+                    m.artists
+                        .iter()
+                        .map(|a| a.name.as_str())
+                        .collect::<Vec<_>>()
                 ))
             );
             found += usize::from(m.is_some());
@@ -721,7 +736,10 @@ pub(crate) mod tests {
             },
         )
         .await;
-        println!("album → {:?}", album.as_ref().map(|a| (&a.browse_id, &a.title)));
+        println!(
+            "album → {:?}",
+            album.as_ref().map(|a| (&a.browse_id, &a.title))
+        );
         let artist = match_artist(&ytm, "Скриптонит").await;
         println!("artist → {:?}", artist.as_ref().map(|a| (&a.id, &a.name)));
         assert!(album.is_some() && artist.is_some());
@@ -827,7 +845,12 @@ pub(crate) mod tests {
 
     #[test]
     fn video_readings() {
-        let v = track("v", "DVN - Можно я с тобой (Official Video)", &["Uploader"], Some(200));
+        let v = track(
+            "v",
+            "DVN - Можно я с тобой (Official Video)",
+            &["Uploader"],
+            Some(200),
+        );
         let c = video_candidates(&v);
         assert_eq!(c.len(), 3);
         assert_eq!(c[0].title, "DVN - Можно я с тобой");
@@ -873,7 +896,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn length_rules_out_other_recordings() {
         let long = track("long", "Song", &["Artist"], Some(400));
-        let cat = FakeCatalog::default().with(SearchFilter::Songs, "Artist Song", vec![Item::Track(long)]);
+        let cat = FakeCatalog::default().with(
+            SearchFilter::Songs,
+            "Artist Song",
+            vec![Item::Track(long)],
+        );
         let t = ytrack("Song", None, &["Artist"], Some(200_000));
         assert!(match_track(&cat, &t).await.is_none());
         // Songs then videos, one query each (no Latin spelling to add).
@@ -889,7 +916,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn version_is_searched_first() {
         let remix = track("r", "Song (Remix)", &["Artist"], Some(200));
-        let cat = FakeCatalog::default().with(SearchFilter::Songs, "Artist Song (Remix)", vec![Item::Track(remix)]);
+        let cat = FakeCatalog::default().with(
+            SearchFilter::Songs,
+            "Artist Song (Remix)",
+            vec![Item::Track(remix)],
+        );
         let t = ytrack("Song", Some("Remix"), &["Artist"], Some(200_000));
         assert_eq!(match_track(&cat, &t).await.unwrap().video_id, "r");
     }
@@ -897,7 +928,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn japanese_title_by_artist_and_length() {
         let hit = track("f", "Faded", &["Alan Walker"], Some(212));
-        let cat = FakeCatalog::default().with(SearchFilter::Songs, "Alan Walker フェイデッド", vec![Item::Track(hit)]);
+        let cat = FakeCatalog::default().with(
+            SearchFilter::Songs,
+            "Alan Walker フェイデッド",
+            vec![Item::Track(hit)],
+        );
         let t = ytrack("フェイデッド", None, &["Alan Walker"], Some(212_500));
         assert_eq!(match_track(&cat, &t).await.unwrap().video_id, "f");
         let off = ytrack("フェイデッド", None, &["Alan Walker"], Some(220_000));
@@ -906,7 +941,12 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn falls_back_to_a_video_upload() {
-        let video = track("v", "DVN - Можно я с тобой (Official Video)", &["Some Channel"], Some(195));
+        let video = track(
+            "v",
+            "DVN - Можно я с тобой (Official Video)",
+            &["Some Channel"],
+            Some(195),
+        );
         let cat = FakeCatalog::default().with(
             SearchFilter::Videos,
             "DVN Можно я с тобой",
@@ -942,7 +982,11 @@ pub(crate) mod tests {
             .with(
                 SearchFilter::Albums,
                 "Artist Album",
-                vec![album("a1", "Album"), album("a2", "Album"), album("a3", "Other")],
+                vec![
+                    album("a1", "Album"),
+                    album("a2", "Album"),
+                    album("a3", "Other"),
+                ],
             )
             .with(
                 SearchFilter::Artists,

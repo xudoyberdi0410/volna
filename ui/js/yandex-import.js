@@ -1,5 +1,6 @@
 // Library → «Импорт из Яндекс Музыки». Rust (src-tauri/src/yandex.rs) signs in
-// and exports the Yandex library; here every track is looked up on YouTube Music
+// (with the browser's Yandex session, else a login window) and exports the
+// Yandex library; here every track is looked up on YouTube Music
 // and the matches go into the local library: likes, playlists, albums, artists.
 // Running it again adds only what is new.
 
@@ -15,6 +16,7 @@ const DURATION_SLACK_S = 15;
 const IMPORTED_FROM = 'yandex';
 
 const STAGES = {
+    browser: 'Беру вход в Яндекс из браузера…',
     login: 'Войдите в Яндекс в открывшемся окне…',
     account: 'Читаю аккаунт…',
     likes: 'Забираю «Мне нравится»…',
@@ -142,7 +144,7 @@ async function runImport({ api, ui, showMissing }) {
         box.say(STAGES[payload.stage] ?? 'Читаю Яндекс Музыку…', payload.detail ?? '');
     });
     try {
-        box.say(STAGES.login);
+        box.say('Вхожу в Яндекс…');
         let library;
         try {
             library = await invoke('yandex_export');

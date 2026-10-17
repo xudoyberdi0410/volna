@@ -1,10 +1,13 @@
-//! Import from Yandex Music: sign in through a separate window, then read the
-//! account's library with the public music API.
+//! Import from Yandex Music: get a token, then read the account's library with
+//! the public music API.
 //!
-//! The token comes from Yandex's implicit OAuth flow for the music client: after
-//! sign-in the login window lands on `music.yandex.ru/#access_token=...`, and we
-//! take the token from that URL. The window keeps its cookies, so the next import
-//! only flashes it. It has no IPC capabilities (only "main" does).
+//! The token comes from Yandex's implicit OAuth flow for the music client, which
+//! ends on `music.yandex.ru/#access_token=...`. Two ways to get there:
+//! - the browser: yt-dlp dumps the cookies of the browser set for YouTube in
+//!   Settings → «Сеть», and `oauth.yandex.<tld>/authorize` with its Yandex session
+//!   answers with the token straight away (the music client is auto-approved);
+//! - a login window, when the browser has no Yandex session. The window keeps its
+//!   cookies, so the next import only flashes it. It has no IPC capabilities.
 //!
 //! The API is reached directly, not through the app proxy: it answers from
 //! Uzbekistan, while the proxy's exit country may not have the service.
@@ -19,10 +22,13 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 use tokio::sync::oneshot;
 use url::Url;
 
+use crate::state::AppState;
+
 type CmdResult<T> = Result<T, String>;
 
 const API: &str = "https://api.music.yandex.net";
-const AUTHORIZE_URL: &str = "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b39c32c41195d";
+/// Yandex Music's own OAuth client.
+const CLIENT_ID: &str = "23cabbbdc6cd418abb4b39c32c41195d";
 const LOGIN_WINDOW: &str = "yandex-login";
 /// The id of the "Мне нравится" playlist; its tracks come from the likes instead.
 const LIKES_KIND: i64 = 3;
@@ -107,10 +113,14 @@ fn progress(app: &AppHandle, stage: &str, detail: Option<String>) {
     let _ = app.emit("yandex-progress", Progress { stage, detail });
 }
 
-/// Signs in if needed and returns the whole library. A stale token gets one
-/// fresh sign-in.
+/// Signs in if needed and returns the whole library. Tries the browser's session
+/// first, then the login window; a stale token gets one fresh sign-in.
 #[tauri::command]
-pub async fn yandex_export(app: AppHandle, state: State<'_, YandexState>) -> CmdResult<Library> {
+pub async fn yandex_export(
+    app: AppHandle,
+    state: State<'_, YandexState>,
+    app_state: State<'_, AppState>,
+) -> CmdResult<Library> {
     let _busy = state
         .busy
         .try_lock()
@@ -119,14 +129,25 @@ pub async fn yandex_export(app: AppHandle, state: State<'_, YandexState>) -> Cmd
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut fresh = false;
+    let (mut tried_browser, mut tried_window) = (false, false);
     loop {
         let token = match state.token() {
             Some(t) => t,
             None => {
-                progress(&app, "login", None);
-                fresh = true;
-                let t = sign_in(&app).await?;
+                let from_browser = if tried_browser {
+                    None
+                } else {
+                    tried_browser = true;
+                    browser_token(&app, &app_state).await
+                };
+                let t = match from_browser {
+                    Some(t) => t,
+                    None => {
+                        tried_window = true;
+                        progress(&app, "login", None);
+                        sign_in(&app).await?
+                    }
+                };
                 state.set_token(Some(t.clone()));
                 t
             }
@@ -135,8 +156,8 @@ pub async fn yandex_export(app: AppHandle, state: State<'_, YandexState>) -> Cmd
             http: http.clone(),
             token,
         };
-        match export(&app, &client).await {
-            Err(ApiError::Unauthorized) if !fresh => state.set_token(None),
+        match export(&client, &|stage, detail| progress(&app, stage, detail)).await {
+            Err(ApiError::Unauthorized) if !tried_window => state.set_token(None),
             Err(ApiError::Unauthorized) => {
                 state.set_token(None);
                 return Err("Яндекс не принял вход, попробуйте ещё раз".to_owned());
@@ -145,6 +166,134 @@ pub async fn yandex_export(app: AppHandle, state: State<'_, YandexState>) -> Cmd
             Ok(library) => return Ok(library),
         }
     }
+}
+
+/// A token from the Yandex session of the browser yt-dlp takes cookies from, or
+/// `None` (no browser set, not signed in there, cookies unreadable).
+async fn browser_token(app: &AppHandle, app_state: &AppState) -> Option<String> {
+    let streams = app_state.streams.as_ref()?;
+    let dir = app.path().app_cache_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("yandex-cookies.txt");
+    progress(app, "browser", None);
+    let dumped = streams.backend().dump_cookies(&path).await;
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    // The jar holds every site's session; keep it on disk no longer than needed.
+    let _ = std::fs::remove_file(&path);
+    match dumped {
+        Ok(true) => {}
+        Ok(false) => return None,
+        Err(e) => {
+            tracing::warn!("yandex: cannot read the browser cookies: {e}");
+            return None;
+        }
+    }
+    token_from_cookies(&text).await
+}
+
+/// Trades the Yandex session in a cookies.txt for a token.
+async fn token_from_cookies(text: &str) -> Option<String> {
+    let jar = parse_cookie_jar(text);
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .ok()?;
+    for domain in session_domains(&jar) {
+        let host = format!("oauth.{domain}");
+        let resp = http
+            .get(authorize_url(&host))
+            .header("Cookie", cookie_header(&jar, &host))
+            .send()
+            .await;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("yandex: {host}: {e}");
+                continue;
+            }
+        };
+        // A redirect carries the token in Location; an auto-approve page in a
+        // meta refresh.
+        let location = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let token = match location.as_deref().and_then(token_in_text) {
+            Some(t) => Some(t),
+            None => resp.text().await.ok().as_deref().and_then(token_in_text),
+        };
+        if token.is_some() {
+            tracing::info!("yandex: signed in with the browser session ({domain})");
+            return token;
+        }
+        tracing::info!("yandex: the browser session on {domain} gave no token");
+    }
+    None
+}
+
+fn authorize_url(host: &str) -> String {
+    format!("https://{host}/authorize?response_type=token&client_id={CLIENT_ID}")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Cookie {
+    /// Without the leading dot.
+    domain: String,
+    name: String,
+    value: String,
+}
+
+/// Netscape cookies.txt; `#HttpOnly_` lines are cookies too.
+fn parse_cookie_jar(text: &str) -> Vec<Cookie> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.strip_prefix("#HttpOnly_").unwrap_or(line);
+            if line.starts_with('#') {
+                return None;
+            }
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() < 7 {
+                return None;
+            }
+            Some(Cookie {
+                domain: f[0].trim_start_matches('.').to_ascii_lowercase(),
+                name: f[5].to_owned(),
+                value: f[6].trim_end_matches('\r').to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// `yandex.ru`, `yandex.uz`, ... wherever the jar has a signed-in session.
+fn session_domains(jar: &[Cookie]) -> Vec<String> {
+    let mut out: Vec<String> = jar
+        .iter()
+        .filter(|c| c.name == "Session_id" && c.domain.starts_with("yandex."))
+        .map(|c| c.domain.clone())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn cookie_header(jar: &[Cookie], host: &str) -> String {
+    jar.iter()
+        .filter(|c| host == c.domain || host.ends_with(&format!(".{}", c.domain)))
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// The token after `access_token=` in a URL or an HTML page.
+fn token_in_text(text: &str) -> Option<String> {
+    let start = text.find("access_token=")? + "access_token=".len();
+    let token: String = text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        .collect();
+    (!token.is_empty()).then_some(token)
 }
 
 /// Opens the login window and waits for the redirect with the token.
@@ -167,7 +316,7 @@ async fn sign_in(app: &AppHandle) -> CmdResult<String> {
     let window = WebviewWindowBuilder::new(
         app,
         LOGIN_WINDOW,
-        WebviewUrl::External(AUTHORIZE_URL.parse().expect("valid URL")),
+        WebviewUrl::External(authorize_url("oauth.yandex.ru").parse().expect("valid URL")),
     )
     .title("Вход в Яндекс")
     .inner_size(480.0, 720.0)
@@ -325,8 +474,12 @@ impl Client {
     }
 }
 
-async fn export(app: &AppHandle, client: &Client) -> Result<Library, ApiError> {
-    progress(app, "account", None);
+/// `progress(stage, detail)` reports each step.
+async fn export(
+    client: &Client,
+    progress: &(dyn Fn(&str, Option<String>) + Sync),
+) -> Result<Library, ApiError> {
+    progress("account", None);
     let status = client.get("/account/status").await?;
     let account = &status["account"];
     let uid = id_string(&account["uid"]).ok_or(ApiError::Unauthorized)?;
@@ -335,7 +488,7 @@ async fn export(app: &AppHandle, client: &Client) -> Result<Library, ApiError> {
         ..Library::default()
     };
 
-    progress(app, "likes", None);
+    progress("likes", None);
     let likes = client
         .get(&format!(
             "/users/{uid}/likes/tracks?if-modified-since-revision=0"
@@ -358,7 +511,7 @@ async fn export(app: &AppHandle, client: &Client) -> Result<Library, ApiError> {
         })
         .collect();
 
-    progress(app, "playlists", None);
+    progress("playlists", None);
     let own = client.get(&format!("/users/{uid}/playlists/list")).await?;
     let mut refs: Vec<(String, i64, bool)> = as_array(&own)
         .iter()
@@ -379,7 +532,7 @@ async fn export(app: &AppHandle, client: &Client) -> Result<Library, ApiError> {
     for (owner, kind, own) in refs {
         match client.playlist(&owner, kind, own).await {
             Ok(p) => {
-                progress(app, "playlists", Some(p.title.clone()));
+                progress("playlists", Some(p.title.clone()));
                 library.playlists.push(p);
             }
             Err(ApiError::Unauthorized) => return Err(ApiError::Unauthorized),
@@ -387,7 +540,7 @@ async fn export(app: &AppHandle, client: &Client) -> Result<Library, ApiError> {
         }
     }
 
-    progress(app, "albums", None);
+    progress("albums", None);
     match client
         .get(&format!("/users/{uid}/likes/albums?rich=true"))
         .await
@@ -490,6 +643,50 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The whole import through the real browser session:
+    /// `VOLNA_TEST_COOKIES=chrome cargo test -p volna yandex_live -- --ignored --nocapture`.
+    /// Prints counts only, never cookies or the token.
+    #[tokio::test]
+    #[ignore]
+    async fn yandex_live_export_from_browser() {
+        let browser = std::env::var("VOLNA_TEST_COOKIES").unwrap_or_else(|_| "chrome".into());
+        let ytdlp = volna_streams::YtDlp::locate(None).expect("yt-dlp");
+        ytdlp
+            .set_cookies(volna_streams::Cookies::Browser(browser))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!("volna-yandex-{}.txt", std::process::id()));
+        assert!(ytdlp.dump_cookies(&path).await.unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let token = token_from_cookies(&text)
+            .await
+            .expect("signed in to Yandex in the browser");
+        let client = Client {
+            http: reqwest::Client::new(),
+            token,
+        };
+        let library = export(&client, &|stage, detail| {
+            println!("{stage} {}", detail.unwrap_or_default())
+        })
+        .await
+        .unwrap();
+        let in_playlists: usize = library.playlists.iter().map(|p| p.tracks.len()).sum();
+        println!(
+            "likes {}, playlists {} ({in_playlists} tracks), albums {}, artists {}",
+            library.liked_tracks.len(),
+            library.playlists.len(),
+            library.albums.len(),
+            library.artists.len()
+        );
+        assert!(!library.liked_tracks.is_empty());
+        assert!(
+            library
+                .liked_tracks
+                .iter()
+                .all(|t| !t.track.artists.is_empty())
+        );
+    }
+
     #[test]
     fn token_comes_from_the_fragment() {
         let url: Url =
@@ -501,6 +698,30 @@ mod tests {
             .parse()
             .unwrap();
         assert_eq!(token_from_url(&no_token), None);
+    }
+
+    #[test]
+    fn finds_the_session_and_its_cookies() {
+        let jar = parse_cookie_jar(
+            "# Netscape HTTP Cookie File\n\
+             .yandex.uz\tTRUE\t/\tTRUE\t0\tyandexuid\t1\n\
+             #HttpOnly_.yandex.uz\tTRUE\t/\tTRUE\t0\tSession_id\tabc\n\
+             .market.yandex.uz\tTRUE\t/\tTRUE\t0\tskid\tx\n\
+             .yandex.ru\tTRUE\t/\tTRUE\t0\tyandexuid\t2\n\
+             .youtube.com\tTRUE\t/\tTRUE\t0\tSID\ty\n",
+        );
+        assert_eq!(session_domains(&jar), ["yandex.uz"]);
+        assert_eq!(
+            cookie_header(&jar, "oauth.yandex.uz"),
+            "yandexuid=1; Session_id=abc"
+        );
+    }
+
+    #[test]
+    fn token_from_a_meta_refresh() {
+        let page = r#"<meta http-equiv="refresh" content='2;URL="https://music.yandex.ru/#access_token=y0_Ab-c.d&#x26;token_type=bearer"'>"#;
+        assert_eq!(token_in_text(page).as_deref(), Some("y0_Ab-c.d"));
+        assert_eq!(token_in_text("<html>no</html>"), None);
     }
 
     #[test]

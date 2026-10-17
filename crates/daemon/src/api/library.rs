@@ -136,7 +136,8 @@ impl Library {
         *self.listener.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(f));
     }
 
-    fn changed(&self, kind: &str) {
+    /// Sends `library_changed{kind}`; bulk writers through [`Library::store`] call it once.
+    pub fn changed(&self, kind: &str) {
         if let Some(f) = self
             .listener
             .lock()

@@ -53,7 +53,7 @@ VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome \
 - Яндекс Музыка ходит напрямую, без прокси: у выхода прокси сервис может быть недоступен.
   Токен берётся из сессии Яндекса в браузере: yt-dlp выгружает cookies, `oauth.yandex.<tld>/authorize`
   сразу отдаёт токен (домен — тот, где есть сессия: `.ru`, `.uz` и т.д.). Живой тест:
-  `VOLNA_TEST_COOKIES=chrome cargo test -p volna yandex_live -- --ignored --nocapture`.
+  `VOLNA_TEST_COOKIES=chrome cargo test -p volna-daemon yandex_live -- --ignored --nocapture`.
 - Тихий звук бывает из-за громкости потока, сохранённой в WirePlumber
   (`~/.local/state/wireplumber/stream-properties`), а не из-за кода.
 

@@ -29,6 +29,9 @@ dirs = "7"
 # `color_palette`: decode covers (the formats `ImageCache` accepts).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 mimalloc = "0.1.52"
+# Unicode folding for the Yandex → YouTube Music matcher (already pulled in by url).
+icu_normalizer = { version = "2.1", default-features = false, features = ["compiled_data"] }
+icu_properties = { version = "2.1", default-features = false, features = ["compiled_data"] }
 fastrand = "2.5"
 rusqlite = { version = "0.40", features = ["bundled"] }
 volna-ytm = { workspace = true }

@@ -4845,6 +4845,8 @@ dependencies = [
  "dirs",
  "fastrand",
  "http",
+ "icu_normalizer",
+ "icu_properties",
  "image",
  "ksni",
  "mimalloc",

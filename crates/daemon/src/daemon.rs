@@ -93,6 +93,7 @@ pub struct Daemon {
     pub player: PlayerState,
     /// Last.fm, Libre.fm, ListenBrainz, Maloja; off until configured.
     pub scrobble: volna_scrobble::Scrobbling,
+    pub yandex: Arc<crate::api::yandex::YandexState>,
     window: WindowLink,
     child: Mutex<Option<std::process::Child>>,
     quitting: AtomicBool,
@@ -136,6 +137,12 @@ fn window_exe() -> PathBuf {
 impl Daemon {
     pub fn has_window(&self) -> bool {
         self.window.connected()
+    }
+
+    /// An event sender for background jobs (`api::*`); silent without a window.
+    pub fn emitter(self: &Arc<Self>) -> crate::api::yandex::Emit {
+        let sink = Sink(Arc::downgrade(self));
+        Arc::new(move |name, payload| sink.emit(name, payload))
     }
 
     /// One visualizer frame to the window; false when there is none.
@@ -308,6 +315,7 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
     scrobble.spawn_retry(Duration::from_secs(120));
     library.set_scrobble(scrobble.clone());
     let player = player::setup(&dirs.data, &dirs.config, &app, &wave, &library, &scrobble);
+    let yandex = crate::api::yandex::desktop_state(&app, &dirs.cache, library.clone());
     let daemon = Arc::new(Daemon {
         app,
         net,
@@ -315,6 +323,7 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
         library,
         player,
         scrobble,
+        yandex,
         window: WindowLink::default(),
         child: Mutex::new(None),
         quitting: AtomicBool::new(false),

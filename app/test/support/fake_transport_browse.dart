@@ -24,10 +24,10 @@ class FakeTransport implements Transport {
   final _events = StreamController<DaemonEvent>.broadcast();
   final _status = StreamController<TransportStatus>.broadcast();
 
-  /// Bytes served for every `volna://img/` request; null answers 404.
-  Uint8List? image;
+  /// Bytes served for a `volna://` request; null answers 404.
+  Uint8List? Function(String uri)? images;
 
-  FakeTransport([Map<String, Handler>? handlers, this.image]) : handlers = {...?handlers};
+  FakeTransport([Map<String, Handler>? handlers, this.images]) : handlers = {...?handlers};
 
   void on(String cmd, Handler h) => handlers[cmd] = h;
 
@@ -55,7 +55,7 @@ class FakeTransport implements Transport {
   @override
   Future<ProtoResponse> proto(String method, String uri,
       {List<Header> headers = const [], Uint8List? body}) async {
-    final img = image;
+    final img = images?.call(uri);
     if (img == null) return ProtoResponse(404, const [], Uint8List(0));
     return ProtoResponse(200, const [('content-type', 'image/png')], img);
   }

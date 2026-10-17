@@ -150,6 +150,9 @@ fn check_url(raw: &str) -> Result<Url> {
 /// Other hosts (ytimg thumbnails have fixed names) are left alone.
 fn resize(mut url: Url, size: u32) -> Url {
     let host = url.host_str().unwrap_or_default();
+    if host.ends_with("ytimg.com") {
+        return resize_ytimg(url, size);
+    }
     if !(host.ends_with("googleusercontent.com") || host.ends_with("ggpht.com")) {
         return url;
     }
@@ -160,6 +163,42 @@ fn resize(mut url: Url, size: u32) -> Url {
     };
     let new_path = format!("{base}=w{size}-h{size}-l90-rj");
     url.set_path(&new_path);
+    url
+}
+
+/// YouTube video thumbnails come in fixed sizes: `default` 120×90,
+/// `mqdefault` 320×180, `hqdefault` 480×360, `sddefault` 640×480,
+/// `maxresdefault` 1280×720. Small requests get a smaller file (never a
+/// bigger one than listed: `maxresdefault` may not exist). The signed
+/// `?sqp=…` crops only fit their own file, so the query goes too.
+fn resize_ytimg(mut url: Url, size: u32) -> Url {
+    const ORDER: [&str; 5] = [
+        "default",
+        "mqdefault",
+        "hqdefault",
+        "sddefault",
+        "maxresdefault",
+    ];
+    let want = match size {
+        0..=120 => 0,
+        121..=320 => 1,
+        _ => return url,
+    };
+    let path = url.path().to_owned();
+    let Some((dir, file)) = path.rsplit_once('/') else {
+        return url;
+    };
+    let Some((stem, ext)) = file.rsplit_once('.') else {
+        return url;
+    };
+    let Some(have) = ORDER.iter().position(|n| *n == stem) else {
+        return url;
+    };
+    if want >= have {
+        return url;
+    }
+    url.set_path(&format!("{dir}/{}.{ext}", ORDER[want]));
+    url.set_query(None);
     url
 }
 
@@ -250,8 +289,34 @@ mod tests {
             resize(url, 100).as_str(),
             "https://lh3.googleusercontent.com/plain=w100-h100-l90-rj"
         );
-        let url = Url::parse("https://i.ytimg.com/vi/x/sddefault.jpg?sqp=1").unwrap();
-        assert_eq!(resize(url.clone(), 100), url);
+    }
+
+    #[test]
+    fn small_ytimg_thumbnails() {
+        let r = |u: &str, s| resize(Url::parse(u).unwrap(), s).to_string();
+        assert_eq!(
+            r("https://i.ytimg.com/vi/x/sddefault.jpg?sqp=1", 100),
+            "https://i.ytimg.com/vi/x/default.jpg"
+        );
+        assert_eq!(
+            r("https://i.ytimg.com/vi/x/hqdefault.jpg?sqp=a&rs=b", 226),
+            "https://i.ytimg.com/vi/x/mqdefault.jpg"
+        );
+        assert_eq!(
+            r("https://i.ytimg.com/vi_webp/x/hqdefault.webp", 80),
+            "https://i.ytimg.com/vi_webp/x/default.webp"
+        );
+        // Big requests and files that are small already stay as they are.
+        let big = "https://i.ytimg.com/vi/x/hqdefault.jpg?sqp=1";
+        assert_eq!(r(big, 544), big);
+        assert_eq!(
+            r("https://i.ytimg.com/vi/x/default.jpg", 300),
+            "https://i.ytimg.com/vi/x/default.jpg"
+        );
+        assert_eq!(
+            r("https://i.ytimg.com/vi/x/frame0.jpg", 80),
+            "https://i.ytimg.com/vi/x/frame0.jpg"
+        );
     }
 
     #[test]

@@ -41,7 +41,9 @@ class Sidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = Theme.of(context);
     final selected = destinationFor(location);
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
       width: compact ? 76 : 228,
       decoration: BoxDecoration(
         color: t.colorScheme.onSurface.withValues(alpha: t.brightness == Brightness.dark ? 0.025 : 0.03),

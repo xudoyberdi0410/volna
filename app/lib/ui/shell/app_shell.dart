@@ -61,7 +61,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             children: [
               Sidebar(
                 location: location,
-                compact: width < 820,
+                // Settings bring their own section list: a rail avoids two
+                // sidebars side by side.
+                compact: width < 820 || location.startsWith('/settings'),
                 onSelect: (p) => context.go(p),
               ),
               Expanded(

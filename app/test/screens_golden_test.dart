@@ -126,5 +126,7 @@ void main() {
       (tester) => shot(tester, 'player_queue', location: '/player?tab=queue'));
   testWidgets('player (light)',
       (tester) => shot(tester, 'player_lyrics_light', location: '/player', theme: ThemeMode.light));
+  testWidgets('settings in the shell',
+      (tester) => shot(tester, 'shell_settings', location: '/settings/appearance'));
   testWidgets('search placeholder', (tester) => shot(tester, 'shell_search', location: '/search'));
 }

@@ -79,10 +79,17 @@ impl<N: Network> ImageCache<N> {
         }
         let bytes = self.download(&url).await?;
         sniff(&bytes).ok_or(StreamError::UpstreamStatus(200))?;
-        // No dedicated error kind for a full disk; callers only log it.
-        self.store(&path, &bytes).await.map_err(|e| {
-            StreamError::InvalidUrl(format!("cannot cache {}: {e}", path.display()))
-        })?;
+        if let Err(e) = self.store(&path, &bytes).await {
+            // A concurrent `get` of the same URL may have won the rename.
+            if tokio::fs::metadata(&path).await.is_ok_and(|m| m.len() > 0) {
+                return Ok(path);
+            }
+            // No dedicated error kind for a full disk; callers only log it.
+            return Err(StreamError::InvalidUrl(format!(
+                "cannot cache {}: {e}",
+                path.display()
+            )));
+        }
         Ok(path)
     }
 

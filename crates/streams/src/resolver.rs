@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::error::{FailureKind, Result};
-use crate::ytdlp::{Quality, ResolvedStream, VideoId, YtDlp};
+use crate::model::{Quality, ResolvedStream, VideoId};
 
 /// Re-resolve this long before googlevideo's `expire`, so a track that
 /// starts near the deadline can still be played to the end.
@@ -15,8 +15,14 @@ pub const DEFAULT_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);
 /// Above this many entries, finished and stale slots are dropped.
 const PRUNE_THRESHOLD: usize = 256;
 
-/// Something that turns a video id into a stream URL. [`YtDlp`] in the app,
+/// Something that turns a video id into a playable stream: `YtDlp`
+/// (feature `ytdlp`) or `RustyPipeBackend` (feature `rustypipe`) in the app,
 /// a fake in tests.
+///
+/// `proxy` is the exit the stream will be fetched through; googlevideo binds
+/// URLs to the IP that resolved them, so a backend must resolve through it.
+/// The answer says how to open the stream ([`crate::Delivery`]); the bytes
+/// themselves are fetched by [`crate::StreamService`].
 pub trait Backend: Send + Sync + 'static {
     fn resolve(
         &self,
@@ -26,14 +32,15 @@ pub trait Backend: Send + Sync + 'static {
     ) -> impl Future<Output = Result<ResolvedStream>> + Send;
 }
 
-impl Backend for YtDlp {
+#[cfg(feature = "ytdlp")]
+impl Backend for crate::ytdlp::YtDlp {
     fn resolve(
         &self,
         id: &VideoId,
         quality: Quality,
         proxy: Option<&str>,
     ) -> impl Future<Output = Result<ResolvedStream>> + Send {
-        YtDlp::resolve(self, id, quality, proxy)
+        crate::ytdlp::YtDlp::resolve(self, id, quality, proxy)
     }
 }
 
@@ -244,10 +251,11 @@ mod tests {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.delay).await;
             if self.fail {
-                return Err(StreamError::YtDlpFailed("boom".into()));
+                return Err(StreamError::ResolveFailed("boom".into()));
             }
             Ok(ResolvedStream {
                 url: format!("https://example.invalid/{id}?n={n}"),
+                delivery: crate::Delivery::Url,
                 format_id: "251".into(),
                 mime: "audio/webm".into(),
                 codec: Some("opus".into()),

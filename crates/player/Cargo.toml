@@ -7,10 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gst = { package = "gstreamer", version = "0.25" }
-gst-base = { package = "gstreamer-base", version = "0.25" }
-gst-audio = { package = "gstreamer-audio", version = "0.25" }
-glib = "0.22"
+gst = { package = "gstreamer", version = "0.25", optional = true }
+gst-base = { package = "gstreamer-base", version = "0.25", optional = true }
+gst-audio = { package = "gstreamer-audio", version = "0.25", optional = true }
+glib = { version = "0.22", optional = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
@@ -22,7 +22,20 @@ arc-swap = "1.7"
 fastrand = "2.5"
 
 [dev-dependencies]
-gst = { package = "gstreamer", version = "0.25" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = "3"
 tracing-subscriber.workspace = true
+
+[features]
+default = ["gstreamer"]
+# The GStreamer output (desktop). Without it the engine runs on an `Output`
+# the host provides (the mobile platform players in `volna-core`).
+gstreamer = ["dep:gst", "dep:gst-base", "dep:gst-audio", "dep:glib"]
+
+[[test]]
+name = "engine"
+required-features = ["gstreamer"]
+
+[[example]]
+name = "play"
+required-features = ["gstreamer"]

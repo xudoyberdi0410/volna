@@ -15,9 +15,9 @@ use futures_util::{Stream, StreamExt};
 use reqwest::{StatusCode, header};
 
 use crate::error::{Result, StreamError};
+use crate::model::{Delivery, Quality, ResolvedStream, VideoId};
 use crate::range::{self, RangeSpec, Span};
 use crate::resolver::{Backend, Resolver};
-use crate::ytdlp::{Quality, ResolvedStream, VideoId};
 
 /// Largest body [`StreamService::serve`] returns. A short `206` makes the
 /// media element ask for the next range, so memory stays bounded.
@@ -335,6 +335,11 @@ impl<B: Backend, N: Network> StreamService<B, N> {
 
     /// Requests `span` and checks the answer; the body is left unread.
     async fn request(&self, stream: &ResolvedStream, span: Span) -> Result<Upstream> {
+        // The one place that knows how bytes are fetched: a SABR delivery
+        // would assemble `span` from its segments here.
+        match stream.delivery {
+            Delivery::Url => {}
+        }
         let mut request = self
             .inner
             .net

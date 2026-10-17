@@ -4837,7 +4837,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "volna-daemon"
+name = "volna-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4848,10 +4848,6 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
  "image",
- "ksni",
- "mimalloc",
- "mpris-server",
- "png 0.17.16",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -4868,6 +4864,33 @@ dependencies = [
  "volna-scrobble",
  "volna-streams",
  "volna-wave",
+ "volna-ytm",
+]
+
+[[package]]
+name = "volna-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "dirs",
+ "http",
+ "ksni",
+ "mimalloc",
+ "mpris-server",
+ "png 0.17.16",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "volna-core",
+ "volna-net",
+ "volna-player",
+ "volna-streams",
  "volna-ytm",
 ]
 

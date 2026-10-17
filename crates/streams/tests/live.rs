@@ -1,5 +1,6 @@
 //! Live tests against YouTube; they need yt-dlp and network access.
 //! Run with `cargo test -p volna-streams --test live -- --ignored --nocapture`.
+#![cfg(feature = "ytdlp")]
 
 use std::sync::Arc;
 use std::time::Instant;

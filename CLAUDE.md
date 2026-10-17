@@ -6,19 +6,23 @@
 ## Где что
 
 - `ui/` — фронт (форк Monochrome, JS/Vite). `ui-upstream/` — нетронутый оригинал для сравнения.
-- `crates/daemon` — бинарник `volna`: демон без GTK/WebKit (плеер, трей, MPRIS, сеть, волна,
-  обработчик `volna://`: `protocol.rs`, `network.rs`, `wave.rs`, `player/`, `dispatch.rs`, `ipc.rs`).
+- `crates/core` — `volna-core`: всё, что вызывает UI, кроме десктопной обвязки: команды
+  (`dispatch.rs`, `api/`, `wave.rs`, `network.rs`), настройки, стримы, логика плеера
+  (`player/`: хуки, журнал, команды `player_*`, мост к плееру платформы), C ABI для мобильных
+  (`ffi.rs`, `include/volna_core.h`). Сборка под Android/iOS — `docs/mobile-build.md`.
+- `crates/daemon` — бинарник `volna`: хост для `volna-core` без GTK/WebKit (сокет `ipc.rs`,
+  GStreamer, трей, MPRIS, окно, `volna://api/`); старые пути модулей реэкспортирует из ядра.
   `api_emu/` (эмуляция TIDAL hifi-api) лежит в `src-tauri/src/api_emu` и подключён в демон через `#[path]`.
 - `src-tauri/` — бинарник `volna-window`: окно (Tauri), всё пересылает демону по сокету
   (`shell.rs`); `yandex.rs` (вход в Яндекс и выгрузка библиотеки; сопоставление с YTM —
   `ui/js/yandex-import.js`) работает в окне. Схема процессов — `docs/native-player.md` §9.
-- `crates/player` — нативный плеер на GStreamer (очередь, EQ, визуализатор).
+- `crates/player` — движок плеера (очередь, EQ, визуализатор) над `Output`; GStreamer — фича `gstreamer`.
 - `crates/ytm` — свой InnerTube-клиент YouTube Music (WEB_REMIX).
 - `crates/net` — reqwest-клиент с прокси (Direct / URL / VLESS через xray).
 - `crates/streams` — резолв аудио через yt-dlp и локальный аудиосервер с Range.
 - `crates/wave` — движок «Моей волны», SQLite.
 - `crates/scrobble` — скробблеры (Last.fm, Libre.fm, ListenBrainz, Maloja) с офлайн-очередью
-  в SQLite; команды `scrobble_*` — `crates/daemon/src/api/scrobble.rs`. По умолчанию выключены,
+  в SQLite; команды `scrobble_*` — `crates/core/src/api/scrobble.rs`. По умолчанию выключены,
   пока их скробблит старый UI.
 - `docs/` — `STRUCTURE.md`, `hifi-api-contract.md` (формат ответов для фронта), `streams.md`.
 - `packaging/arch/PKGBUILD` — пакет pacman. Windows собирается в CI (`.github/workflows/build.yml`).

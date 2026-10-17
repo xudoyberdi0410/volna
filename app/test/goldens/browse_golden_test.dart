@@ -34,7 +34,7 @@ void main() {
         await before();
         await settle(tester);
       }
-      await expectLater(find.byType(MaterialApp), matchesGoldenFile('$name.png'));
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('browse/$name.png'));
     } finally {
       debugDisableShadows = true;
     }

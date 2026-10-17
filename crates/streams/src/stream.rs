@@ -24,6 +24,11 @@ use crate::ytdlp::{Quality, ResolvedStream, VideoId};
 /// 2 MiB is ~2 minutes of 128 kbit/s Opus.
 pub const DEFAULT_CHUNK_CAP: u64 = 2 * 1024 * 1024;
 
+/// How many times a URL googlevideo rejects up front is resolved again.
+/// Some yt-dlp URLs (web_embedded with a video-bound PO token experiment) are
+/// refused straight away while the next resolve of the same video works.
+const OPEN_RERESOLVES: usize = 3;
+
 /// Bytes per upstream request. yt-dlp uses ~10 MB chunks against YouTube
 /// throttling; a long open range is fetched as consecutive windows.
 const UPSTREAM_WINDOW: u64 = 8 * 1024 * 1024;
@@ -258,7 +263,7 @@ impl<B: Backend, N: Network> StreamService<B, N> {
         let spec = req.range.as_deref().and_then(RangeSpec::parse);
         let mut stream = self.resolve(&req.id, req.quality).await?;
 
-        for attempt in 0..2 {
+        for attempt in 0..=OPEN_RERESOLVES {
             if req.head
                 && let Some(total) = stream.filesize
             {
@@ -279,7 +284,7 @@ impl<B: Backend, N: Network> StreamService<B, N> {
                         first: Some(resp),
                     });
                 }
-                None if attempt == 0 => {
+                None if attempt < OPEN_RERESOLVES => {
                     tracing::info!(id = %req.id, "googlevideo rejected the URL, re-resolving");
                     self.inner
                         .resolver

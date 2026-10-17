@@ -2,6 +2,10 @@
 //! the same `protocol::handle` entry the webview uses.
 //!
 //! `cargo test -p volna api_live -- --ignored --nocapture --test-threads=1`
+//!
+//! YouTube Music is geo-blocked in some countries and datacenter exits get
+//! yt-dlp's bot check, so the tests can run like the app is configured:
+//! `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome`.
 
 use http::{Request, StatusCode, header};
 use serde_json::Value;
@@ -9,6 +13,23 @@ use serde_json::Value;
 use crate::protocol::handle;
 use crate::protocol::tests::test_state;
 use crate::state::AppState;
+
+/// [`test_state`] with the network and cookies from the environment.
+async fn live_state() -> AppState {
+    let state = test_state();
+    if let Ok(proxy) = std::env::var("VOLNA_TEST_PROXY") {
+        crate::network::switch(&state, volna_net::ProxyConfig::Url(proxy))
+            .await
+            .expect("VOLNA_TEST_PROXY");
+    }
+    if let (Ok(browser), Some(streams)) = (std::env::var("VOLNA_TEST_COOKIES"), &state.streams) {
+        streams
+            .backend()
+            .set_cookies(volna_streams::Cookies::Browser(browser))
+            .expect("VOLNA_TEST_COOKIES");
+    }
+    state
+}
 
 async fn get(state: &AppState, uri: &str) -> Value {
     let res = handle(state, Request::get(uri).body(Vec::new()).unwrap()).await;
@@ -36,7 +57,7 @@ fn assert_track(t: &Value) {
 #[tokio::test]
 #[ignore = "network: music.youtube.com"]
 async fn api_live_search_album_artist_radio() {
-    let state = test_state();
+    let state = live_state().await;
     let q = "volna://api/search/?q=%D0%A1%D0%BA%D1%80%D0%B8%D0%BF%D1%82%D0%BE%D0%BD%D0%B8%D1%82";
 
     // Combined search fills every bucket the UI may ask for.
@@ -158,7 +179,7 @@ async fn api_live_search_album_artist_radio() {
 #[tokio::test]
 #[ignore = "network: music.youtube.com + googlevideo, needs yt-dlp"]
 async fn api_live_search_then_stream_range() {
-    let state = test_state();
+    let state = live_state().await;
     assert!(state.streams.is_some(), "yt-dlp not found");
     let search = get(
         &state,
@@ -204,7 +225,7 @@ async fn api_live_search_then_stream_range() {
 #[tokio::test]
 #[ignore = "network: music.youtube.com"]
 async fn api_live_home_explore_lyrics_playlist() {
-    let state = test_state();
+    let state = live_state().await;
     let home = get(&state, "volna://api/home/").await;
     let sections = arr(&home["sections"], "home sections");
     println!("home: {} sections", sections.len());
@@ -281,7 +302,7 @@ async fn api_live_home_explore_lyrics_playlist() {
 #[tokio::test]
 #[ignore = "network: lrclib.net"]
 async fn api_live_lyrics_proxy() {
-    let state = test_state();
+    let state = live_state().await;
     let u = "https://lrclib.net/api/search?q=never%20gonna%20give%20you%20up";
     let uri = format!(
         "volna://api/proxy/?u={}",

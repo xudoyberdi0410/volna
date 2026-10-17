@@ -2,11 +2,11 @@
 # Сборка: cd packaging/arch && makepkg -si
 pkgname=volna
 pkgver=0.1.0
-pkgrel=1
+pkgrel=3
 pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
 arch=('x86_64')
 license=('Apache-2.0')
-depends=('webkit2gtk-4.1' 'gtk3' 'yt-dlp' 'deno' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav')
+depends=('webkit2gtk-4.1' 'gtk3' 'yt-dlp' 'deno' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'bgutil-ytdlp-pot-provider')
 optdepends=('xray: режим VLESS в настройках сети')
 makedepends=('cargo')  # + bun (стоит вне pacman)
 options=('!lto' '!debug')

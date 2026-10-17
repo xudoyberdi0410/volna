@@ -99,6 +99,9 @@ pub const COOKIE_BROWSERS: &[&str] = &[
     "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
 ];
 
+/// YouTube client tried first when resolving (see [`YtDlp::resolve`]).
+const PREFERRED_CLIENT: &str = "web_music";
+
 /// Linux keyrings yt-dlp can take the Chromium cookie key from (`chrome+kwallet6`).
 pub const COOKIE_KEYRINGS: &[&str] = &[
     "basictext",
@@ -441,12 +444,14 @@ impl YtDlp {
         Ok(())
     }
 
-    /// The arguments for resolving `id` (without the binary itself).
+    /// The arguments for resolving `id` (without the binary itself);
+    /// `player_client` overrides yt-dlp's own choice of YouTube clients.
     pub fn resolve_args(
         id: &VideoId,
         quality: Quality,
         proxy: Option<&str>,
         cookies: &Cookies,
+        player_client: Option<&str>,
     ) -> Vec<String> {
         let mut args: Vec<String> = [
             "--ignore-config",
@@ -463,6 +468,10 @@ impl YtDlp {
             args.push(proxy.into());
         }
         cookies.push_args(&mut args);
+        if let Some(client) = player_client {
+            args.push("--extractor-args".into());
+            args.push(format!("youtube:player_client={client}"));
+        }
         args.push("--".into());
         args.push(id.watch_url());
         args
@@ -477,12 +486,30 @@ impl YtDlp {
         proxy: Option<&str>,
     ) -> Result<ResolvedStream> {
         let started = std::time::Instant::now();
-        let output = self
+        let cookies = self.cookies();
+        // yt-dlp's default picks web_embedded, whose URLs googlevideo often
+        // refuses with 403 (video-bound PO token experiment). The YouTube
+        // Music client works with cookies and a PO token provider, so try it
+        // first and fall back to the default when it yields nothing.
+        let mut output = self
             .run(
-                Self::resolve_args(id, quality, proxy, &self.cookies()),
+                Self::resolve_args(id, quality, proxy, &cookies, Some(PREFERRED_CLIENT)),
                 self.timeout,
             )
             .await?;
+        if !output.status.success() {
+            tracing::debug!(
+                %id,
+                "{PREFERRED_CLIENT} failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            output = self
+                .run(
+                    Self::resolve_args(id, quality, proxy, &cookies, None),
+                    self.timeout,
+                )
+                .await?;
+        }
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!(%id, "yt-dlp failed: {}", stderr.trim());
@@ -650,7 +677,7 @@ mod tests {
     #[test]
     fn builds_args_with_and_without_proxy() {
         let id = VideoId::parse("dQw4w9WgXcQ").unwrap();
-        let direct = YtDlp::resolve_args(&id, Quality::High, None, &Cookies::None);
+        let direct = YtDlp::resolve_args(&id, Quality::High, None, &Cookies::None, None);
         assert!(!direct.contains(&"--proxy".to_owned()));
         assert_eq!(
             direct.last().unwrap(),
@@ -664,6 +691,7 @@ mod tests {
             Quality::Low,
             Some("socks5h://u:p@127.0.0.1:1"),
             &Cookies::None,
+            None,
         );
         let p = proxied.iter().position(|a| a == "--proxy").unwrap();
         assert_eq!(proxied[p + 1], "socks5h://u:p@127.0.0.1:1");
@@ -675,6 +703,7 @@ mod tests {
             Quality::High,
             None,
             &Cookies::Browser("firefox".into()),
+            None,
         );
         let c = browser
             .iter()
@@ -689,6 +718,7 @@ mod tests {
             Quality::High,
             None,
             &Cookies::File("/tmp/c.txt".into()),
+            None,
         );
         let c = file.iter().position(|a| a == "--cookies").unwrap();
         assert_eq!(file[c + 1], "/tmp/c.txt");

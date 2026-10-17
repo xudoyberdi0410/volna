@@ -106,7 +106,7 @@ impl NetworkState {
 }
 
 /// Hot-swaps the network and everything that depends on the exit IP.
-async fn switch(app: &AppState, config: ProxyConfig) -> CmdResult<()> {
+pub(crate) async fn switch(app: &AppState, config: ProxyConfig) -> CmdResult<()> {
     config.validate().map_err(|e| e.to_string())?;
     app.net.apply(config).await.map_err(|e| e.to_string())?;
     app.api.refresh_http_client().await;

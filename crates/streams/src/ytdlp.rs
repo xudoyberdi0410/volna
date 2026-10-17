@@ -99,16 +99,101 @@ pub const COOKIE_BROWSERS: &[&str] = &[
     "brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale",
 ];
 
+/// Linux keyrings yt-dlp can take the Chromium cookie key from (`chrome+kwallet6`).
+pub const COOKIE_KEYRINGS: &[&str] = &[
+    "basictext",
+    "gnomekeyring",
+    "kwallet",
+    "kwallet5",
+    "kwallet6",
+];
+
+/// Chromium-based browsers encrypt cookies with a key kept in the desktop keyring.
+const CHROMIUM_BROWSERS: &[&str] = &[
+    "brave", "chrome", "chromium", "edge", "opera", "vivaldi", "whale",
+];
+
+/// Splits `name[+keyring][:profile]` (yt-dlp's `--cookies-from-browser` syntax).
+fn split_browser_spec(spec: &str) -> (&str, Option<&str>, Option<&str>) {
+    let (head, profile) = match spec.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (spec, None),
+    };
+    let (name, keyring) = match head.split_once('+') {
+        Some((n, k)) => (n, Some(k)),
+        None => (head, None),
+    };
+    (name, keyring, profile)
+}
+
+/// The keyring holding Chromium's cookie key on this desktop. yt-dlp guesses it
+/// from XDG_CURRENT_DESKTOP, which fails outside KDE/GNOME (e.g. Hyprland with
+/// KWallet running) and leaves every cookie undecryptable.
+#[cfg(target_os = "linux")]
+fn detect_keyring() -> Option<&'static str> {
+    static KEYRING: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+    *KEYRING.get_or_init(|| {
+        let names = std::process::Command::new("busctl")
+            .args(["--user", "list", "--no-legend", "--acquired"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())?;
+        let has = |svc: &str| {
+            names
+                .lines()
+                .any(|l| l.split_whitespace().next() == Some(svc))
+        };
+        if has("org.kde.kwalletd6") {
+            Some("kwallet6")
+        } else if has("org.kde.kwalletd5") {
+            Some("kwallet5")
+        } else if has("org.freedesktop.secrets") {
+            Some("gnomekeyring")
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_keyring() -> Option<&'static str> {
+    None
+}
+
+/// Adds the detected keyring to a Chromium browser spec that names none.
+fn with_keyring(spec: &str, keyring: Option<&str>) -> String {
+    let (name, explicit, profile) = split_browser_spec(spec);
+    let keyring = match (explicit, keyring) {
+        (Some(k), _) => Some(k),
+        (None, k) if CHROMIUM_BROWSERS.contains(&name) => k,
+        _ => None,
+    };
+    let mut out = name.to_owned();
+    if let Some(k) = keyring {
+        out.push('+');
+        out.push_str(k);
+    }
+    if let Some(p) = profile {
+        out.push(':');
+        out.push_str(p);
+    }
+    out
+}
+
 impl Cookies {
     /// Checks the setting before it is used or saved.
     pub fn validate(&self) -> Result<()> {
         match self {
             Self::None => Ok(()),
             Self::Browser(spec) => {
-                let (name, profile) = match spec.split_once(':') {
-                    Some((n, p)) => (n, Some(p)),
-                    None => (spec.as_str(), None),
-                };
+                let (name, keyring, profile) = split_browser_spec(spec);
+                if keyring.is_some_and(|k| !COOKIE_KEYRINGS.contains(&k)) {
+                    return Err(StreamError::InvalidCookies(format!(
+                        "unknown keyring {:?} (expected one of {})",
+                        keyring.unwrap_or_default(),
+                        COOKIE_KEYRINGS.join(", ")
+                    )));
+                }
                 if !COOKIE_BROWSERS.contains(&name) {
                     return Err(StreamError::InvalidCookies(format!(
                         "unknown browser {name:?} (expected one of {})",
@@ -140,7 +225,7 @@ impl Cookies {
             Self::None => {}
             Self::Browser(spec) => {
                 args.push("--cookies-from-browser".into());
-                args.push(spec.clone());
+                args.push(with_keyring(spec, detect_keyring()));
             }
             Self::File(path) => {
                 args.push("--cookies".into());
@@ -614,6 +699,12 @@ mod tests {
         assert!(Cookies::None.validate().is_ok());
         assert!(Cookies::Browser("firefox".into()).validate().is_ok());
         assert!(
+            Cookies::Browser("chrome+kwallet6:Default".into())
+                .validate()
+                .is_ok()
+        );
+        assert!(Cookies::Browser("chrome+wallet".into()).validate().is_err());
+        assert!(
             Cookies::Browser("chrome:Profile 1".into())
                 .validate()
                 .is_ok()
@@ -713,5 +804,20 @@ mod tests {
             Some((bundled, Origin::Sidecar))
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn chromium_specs_get_the_detected_keyring() {
+        assert_eq!(with_keyring("chrome", Some("kwallet6")), "chrome+kwallet6");
+        assert_eq!(
+            with_keyring("brave:Profile 1", Some("gnomekeyring")),
+            "brave+gnomekeyring:Profile 1"
+        );
+        assert_eq!(
+            with_keyring("chrome+basictext", Some("kwallet6")),
+            "chrome+basictext"
+        );
+        assert_eq!(with_keyring("firefox", Some("kwallet6")), "firefox");
+        assert_eq!(with_keyring("chrome", None), "chrome");
     }
 }

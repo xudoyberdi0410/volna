@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Release build: fetches the sidecars if they are missing, then runs
 # `tauri build` with src-tauri/tauri.bundle.json merged in (it adds the
-# xray and yt-dlp externalBin entries, which plain dev builds do without).
+# xray, yt-dlp, Deno and bgutil-pot sidecars and the bgutil yt-dlp plugin,
+# which plain dev builds do without).
 #
 #   scripts/build.sh                    # Linux: AppImage + deb; Windows: NSIS
 #   scripts/build.sh --bundles deb      # extra args go to `tauri build`
@@ -16,7 +17,7 @@ case "$(uname -s)" in
     *) echo "build: unsupported host $(uname -s)" >&2 && exit 1 ;;
 esac
 
-for name in volna-xray volna-yt-dlp; do
+for name in volna-xray volna-yt-dlp volna-deno volna-bgutil-pot; do
     if [[ ! -f "$ROOT/src-tauri/binaries/$name-$triple$exe" ]]; then
         "$ROOT/scripts/fetch-sidecars.sh"
         break

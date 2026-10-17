@@ -52,7 +52,7 @@ chmod +x "$WORK/bin/pkg-config"
 export PKG_CONFIG="$WORK/bin/pkg-config" PKG_CONFIG_PATH="$GST/lib/pkgconfig" PKG_CONFIG_ALLOW_CROSS=1
 
 cd /src
-for name in volna-xray volna-yt-dlp; do
+for name in volna-xray volna-yt-dlp volna-deno volna-bgutil-pot; do
     [[ -f "src-tauri/binaries/$name-$TRIPLE.exe" ]] || { scripts/fetch-sidecars.sh windows; break; }
 done
 

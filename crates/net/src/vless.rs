@@ -437,7 +437,7 @@ mod tests {
 
     const UUID: &str = "92cc34c0-f305-4528-9473-28bf84c6862b";
 
-    /// REALITY + xhttp, the shape 3x-ui exports for the Hetzner server.
+    /// REALITY + xhttp, the shape 3x-ui exports.
     pub(crate) const REALITY_XHTTP: &str = "vless://92cc34c0-f305-4528-9473-28bf84c6862b@203.0.113.10:443\
         ?type=xhttp&encryption=none&path=%2Fapi%2Fv1&host=&mode=auto&security=reality\
         &pbk=wigF4NuMt2kUCb5_gX1rosrHLsVAjNkWx6JhM9ntJ_s&fp=chrome&sni=www.microsoft.com\
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(link.id, UUID);
         assert_eq!(link.address, "203.0.113.10");
         assert_eq!(link.port, 443);
-        assert_eq!(link.name.as_deref(), Some("Hetzner 🇩🇪"));
+        assert_eq!(link.name.as_deref(), Some("Test 🧪"));
         assert_eq!(link.encryption, "none");
         assert_eq!(link.flow, None);
         assert_eq!(

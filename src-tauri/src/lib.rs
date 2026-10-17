@@ -9,6 +9,7 @@ mod protocol;
 mod settings;
 mod state;
 mod wave;
+mod yandex;
 
 use tauri::Manager;
 use volna_streams::LoopbackServer;
@@ -56,6 +57,7 @@ pub fn run() {
             app.manage(state);
             app.manage(network);
             app.manage(wave);
+            app.manage(yandex::YandexState::default());
             // Restoring may start xray; the window does not wait for it.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -92,6 +94,7 @@ pub fn run() {
             wave::wave_stop,
             wave::wave_event,
             wave::wave_sync_likes,
+            yandex::yandex_export,
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let state = ctx

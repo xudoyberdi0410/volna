@@ -3,7 +3,8 @@
 //!
 //! Everything is asynchronous: [`volna_core_call`] and [`volna_core_proto`]
 //! return at once and answer later through the registered callbacks, from a
-//! core thread. Callbacks may fire on any thread and must not block.
+//! core thread. Callbacks may fire on any thread and must not block; once a
+//! `volna_core_set_*_callback` replaces one, it never runs again.
 //!
 //! Ownership: every `char *` and `uint8_t *` handed to a callback belongs to
 //! the receiver, who frees it with [`volna_core_free_string`] /
@@ -102,6 +103,15 @@ fn get<F: Copy>(slot: &Slot<F>) -> Option<Cb<F>> {
     slot.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Calls the registered callback, if any, under the slot's read lock: once
+/// [`set`] returns, the old callback is not running and never runs again,
+/// so the host may free it (Dart closes its `NativeCallable`).
+fn with<F: Copy>(slot: &Slot<F>, call: impl FnOnce(&Cb<F>)) {
+    if let Some(cb) = slot.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        call(cb);
+    }
+}
+
 fn set<F: Copy>(slot: &Slot<F>, f: Option<F>, user: *mut c_void) {
     *slot.write().unwrap_or_else(|e| e.into_inner()) = f.map(|f| Cb {
         f,
@@ -158,9 +168,9 @@ impl EventSink for FfiEvents {
         get(&self.0).is_some()
     }
     fn emit(&self, name: &str, payload: Value) {
-        if let Some(cb) = get(&self.0) {
+        with(&self.0, |cb| {
             (cb.f)(cb.user(), c_string(name.to_owned()), c_string(payload.to_string()));
-        }
+        });
     }
 }
 
@@ -295,10 +305,10 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
     {
         let slot = player.clone();
         output.set_player(Some(Arc::new(CommandPlayer(move |cmd| {
-            if let Some(cb) = get(&slot) {
+            with(&slot, |cb| {
                 let json = serde_json::to_string(&cmd).unwrap_or_default();
                 (cb.f)(cb.user(), c_string(json));
-            }
+            });
         }))));
     }
     Box::into_raw(Box::new(VolnaCore {
@@ -355,7 +365,10 @@ pub unsafe extern "C" fn volna_core_stream_base(handle: *mut VolnaCore) -> *mut 
         .map_or(std::ptr::null_mut(), c_string)
 }
 
-/// Where [`volna_core_call`] replies go (NULL `callback`: dropped).
+/// Where [`volna_core_call`] replies go (NULL `callback`: dropped). When
+/// this returns, the previous callback is not running and is never called
+/// again, so it may be freed. Not from inside a callback (it would wait
+/// for itself).
 ///
 /// # Safety
 /// `handle` is a live handle; `callback` stays valid until replaced.
@@ -470,13 +483,11 @@ pub unsafe extern "C" fn volna_core_call(
             Ok((cmd, args)) => core.call(&cmd, &args).await,
             Err(e) => Err(e),
         };
-        if let Some(cb) = get(&reply) {
-            let (ok, json) = match result {
-                Ok(v) => (true, v.to_string()),
-                Err(e) => (false, Value::String(e).to_string()),
-            };
-            (cb.f)(cb.user(), id, ok, c_string(json));
-        }
+        let (ok, json) = match result {
+            Ok(v) => (true, v.to_string()),
+            Err(e) => (false, Value::String(e).to_string()),
+        };
+        with(&reply, |cb| (cb.f)(cb.user(), id, ok, c_string(json)));
     });
 }
 
@@ -499,9 +510,6 @@ pub unsafe extern "C" fn volna_core_proto(handle: *mut VolnaCore, id: u64, uri: 
             Ok(req) => core.proto(req).await,
             Err(e) => crate::protocol::json_error(http::StatusCode::BAD_REQUEST, &e.to_string()),
         };
-        let Some(cb) = get(&slot) else {
-            return;
-        };
         let (parts, body) = resp.into_parts();
         let headers: Vec<(String, String)> = parts
             .headers
@@ -511,8 +519,10 @@ pub unsafe extern "C" fn volna_core_proto(handle: *mut VolnaCore, id: u64, uri: 
         let headers = serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into());
         let body = body.into_boxed_slice();
         let len = body.len();
-        let ptr = Box::into_raw(body).cast::<u8>();
-        (cb.f)(cb.user(), id, parts.status.as_u16(), c_string(headers), ptr, len);
+        with(&slot, |cb| {
+            let ptr = Box::into_raw(body).cast::<u8>();
+            (cb.f)(cb.user(), id, parts.status.as_u16(), c_string(headers), ptr, len);
+        });
     });
 }
 

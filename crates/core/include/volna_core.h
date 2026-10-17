@@ -59,7 +59,10 @@ char *volna_core_last_error(void);
 // `handle` is NULL or a live handle.
 char *volna_core_stream_base(struct VolnaCore *handle);
 
-// Where [`volna_core_call`] replies go (NULL `callback`: dropped).
+// Where [`volna_core_call`] replies go (NULL `callback`: dropped). When
+// this returns, the previous callback is not running and is never called
+// again, so it may be freed. Not from inside a callback (it would wait
+// for itself).
 //
 // # Safety
 // `handle` is a live handle; `callback` stays valid until replaced.

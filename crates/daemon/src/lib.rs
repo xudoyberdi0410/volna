@@ -9,6 +9,7 @@
 
 #[path = "../../../src-tauri/src/api_emu/mod.rs"]
 pub mod api_emu;
+pub mod api;
 pub mod commands;
 pub mod daemon;
 pub mod dispatch;

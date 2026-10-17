@@ -32,6 +32,7 @@ volna-streams = { workspace = true }
 volna-wave = { workspace = true }
 volna-player = { workspace = true }
 tauri-plugin-single-instance = "2"
+mimalloc = "0.1.52"
 
 # Same version and features as wry, so the webview types match (webview_memory.rs).
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -5,6 +5,7 @@ mod api_emu;
 mod commands;
 mod media;
 mod network;
+mod player;
 mod protocol;
 mod settings;
 mod state;
@@ -35,7 +36,15 @@ pub fn run() {
         .ok();
     let stream_base = audio_server.as_ref().map(LoopbackServer::stream_base);
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // First: a second launch only shows the running instance's window.
+    // VOLNA_MULTI_INSTANCE=1 lets dev and test copies run next to it.
+    if std::env::var_os("VOLNA_MULTI_INSTANCE").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            player::window::show_or_create(app)
+        }));
+    }
+    let app = builder
         .plugin(stream_base_plugin(stream_base.as_deref()))
         .setup(move |app| {
             let cache_dir = app.path().app_cache_dir()?;
@@ -55,6 +64,8 @@ pub fn run() {
                 &app.path().app_config_dir()?,
             ));
             let wave = wave::WaveState::open(&app.path().app_data_dir()?, state.api.ytm())?;
+            let player = player::setup(app, &state, &wave)?;
+            app.manage(player);
             app.manage(state);
             app.manage(network);
             app.manage(wave);
@@ -70,6 +81,15 @@ pub fn run() {
                     .await;
             });
             Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                player::window::on_close_requested(window, api)
+            }
+            tauri::WindowEvent::Destroyed if window.label() == "main" => {
+                player::window::on_destroyed(window.app_handle())
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::ytdlp_version,
@@ -97,6 +117,36 @@ pub fn run() {
             wave::wave_event,
             wave::wave_sync_likes,
             yandex::yandex_export,
+            player::commands::player_snapshot,
+            player::commands::player_play,
+            player::commands::player_pause,
+            player::commands::player_toggle,
+            player::commands::player_stop,
+            player::commands::player_next,
+            player::commands::player_prev,
+            player::commands::player_seek,
+            player::commands::player_play_uid,
+            player::commands::player_set_queue,
+            player::commands::player_enqueue,
+            player::commands::player_remove,
+            player::commands::player_move,
+            player::commands::player_clear,
+            player::commands::player_set_shuffle,
+            player::commands::player_set_repeat,
+            player::commands::player_set_settings,
+            player::commands::player_set_dsp,
+            player::commands::player_set_sleep_timer,
+            player::commands::player_set_continuation,
+            player::commands::player_wave_start,
+            player::commands::player_wave_stop,
+            player::commands::player_wave_dislike,
+            player::commands::player_wave_requeue,
+            player::commands::player_visualizer_start,
+            player::commands::player_visualizer_stop,
+            player::commands::player_journal,
+            player::commands::player_journal_ack,
+            player::commands::app_ready_to_close,
+            player::commands::app_quit,
         ])
         .register_asynchronous_uri_scheme_protocol(SCHEME, |ctx, request, responder| {
             let state = ctx
@@ -119,6 +169,14 @@ pub fn run() {
         .expect("error while building Volna");
 
     app.run(|handle, event| {
+        // Closing the window keeps Volna in the tray; only quit exits.
+        if let tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } = &event
+            && !player::window::quitting()
+        {
+            api.prevent_exit();
+        }
         if let tauri::RunEvent::Exit = event
             && let Some(state) = handle.try_state::<AppState>()
         {

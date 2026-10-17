@@ -30,7 +30,19 @@ volna-ytm = { workspace = true }
 volna-net = { workspace = true }
 volna-streams = { workspace = true }
 volna-wave = { workspace = true }
+volna-player = { workspace = true }
+tauri-plugin-single-instance = "2"
 
 # Same version and features as wry, so the webview types match (webview_memory.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+# Tray (StatusNotifierItem: left click shows the window) and MPRIS.
+ksni = "0.3"
+mpris-server = { version = "0.10", features = ["tokio"] }
+
+# Linux uses ksni; Tauri's tray-icon (libayatana-appindicator) only on Windows.
+[target.'cfg(windows)'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -42,7 +42,12 @@ impl WaveState {
         })
     }
 
-    fn ytm(&self) -> &YtmClient {
+    /// The engine, for the native player's continuation (`player/hooks.rs`).
+    pub fn engine(&self) -> Arc<Wave<YtmSource>> {
+        self.wave.clone()
+    }
+
+    pub fn ytm(&self) -> &YtmClient {
         self.wave.source().client()
     }
 }

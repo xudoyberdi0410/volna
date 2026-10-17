@@ -311,19 +311,29 @@ class _SearchField extends StatelessWidget {
   }
 }
 
-class _Suggestions extends ConsumerWidget {
+class _Suggestions extends ConsumerStatefulWidget {
   final String input;
   final ValueChanged<String> onQuery;
   final VoidCallback onItem;
   const _Suggestions({super.key, required this.input, required this.onQuery, required this.onItem});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final s = ref.watch(suggestionsProvider(input.trim()));
+  ConsumerState<_Suggestions> createState() => _SuggestionsState();
+}
+
+class _SuggestionsState extends ConsumerState<_Suggestions> {
+  /// The last answer, shown while the next keystroke's loads (no flicker).
+  SearchSuggestions? _last;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = ref.watch(suggestionsProvider(widget.input.trim()));
     final cs = Theme.of(context).colorScheme;
     final side = Gap.side(MediaQuery.sizeOf(context).width) - 8;
-    // Keep showing the previous suggestions while the next ones load.
-    final data = s.value;
+    final onQuery = widget.onQuery;
+    final onItem = widget.onItem;
+    final data = s.value ?? _last;
+    if (s.value != null) _last = s.value;
     if (data == null) {
       return s.hasError
           ? const SizedBox.shrink()

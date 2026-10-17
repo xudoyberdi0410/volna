@@ -1,0 +1,27 @@
+[package]
+name = "volna-streams-rustypipe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+# Links RustyPipe (GPL-3.0). Excluded from the workspace and never shipped:
+# see docs/streams.md.
+license = "GPL-3.0"
+publish = false
+
+# Its own workspace and Cargo.lock, so the app's lock never references
+# RustyPipe, Codeberg, reqwest 0.13 or aws-lc.
+[workspace]
+
+[dependencies]
+volna-streams = { path = "../streams", default-features = false }
+# Unreleased branch: crates.io 0.11.4 can no longer deobfuscate the player.
+rustypipe = { git = "https://codeberg.org/ThetaDev/rustypipe.git", rev = "597db1797ad48238bc9a8b222356e65e0303b6f4", default-features = false, features = ["rustls", "deobfuscator"] }
+# RustyPipe's own reqwest major, for handing it a proxied ClientBuilder.
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "socks"] }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+volna-net = { path = "../net" }
+reqwest-app = { package = "reqwest", version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["full"] }

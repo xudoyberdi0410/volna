@@ -11,6 +11,9 @@ members = [
     "crates/scrobble",
     "crates/lyrics",
 ]
+# GPL-3.0 RustyPipe backend (phase 5 spike): built on its own with its own
+# Cargo.lock, never part of the app. See docs/streams.md.
+exclude = ["crates/streams-rustypipe"]
 
 [workspace.package]
 version = "0.1.0"

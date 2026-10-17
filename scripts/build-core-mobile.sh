@@ -10,14 +10,15 @@
 # ~/.swiftpm/swift-sdks/darwin.artifactbundle (its ld64.lld understands the
 # SDK's .tbd stubs; the system lld may be too old).
 #
-# Mobile builds drop yt-dlp: --no-default-features --features ffi.
+# Mobile builds drop yt-dlp and resolve streams in-process:
+# --no-default-features --features ffi,innertube.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 what="${1:-}"
 shift || true
-features=(-p volna-core --no-default-features --features ffi)
+features=(-p volna-core --no-default-features --features ffi,innertube)
 
 case "$what" in
 android)

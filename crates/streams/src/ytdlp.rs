@@ -576,6 +576,32 @@ impl YtDlp {
         Ok(report)
     }
 
+    /// Writes every cookie of the configured source (all sites, not only
+    /// YouTube) to `dest` as a Netscape cookies.txt, for other sign-ins that
+    /// ride on the browser's session. Returns `false` when no source is set.
+    pub async fn dump_cookies(&self, dest: &Path) -> Result<bool> {
+        let cookies = self.cookies();
+        if let Cookies::File(path) = &cookies {
+            std::fs::copy(path, dest).map_err(StreamError::YtDlpSpawn)?;
+            return Ok(true);
+        }
+        let mut args = Vec::new();
+        cookies.push_args(&mut args);
+        if args.is_empty() {
+            return Ok(false);
+        }
+        args.push("--cookies".into());
+        args.push(dest.display().to_string());
+        // Without a URL yt-dlp exits with an error, but only after saving the jar.
+        let output = self.run(args, Duration::from_secs(60)).await?;
+        if !dest.is_file() {
+            return Err(StreamError::YtDlpFailed(
+                String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            ));
+        }
+        Ok(true)
+    }
+
     async fn run(&self, args: Vec<String>, timeout: Duration) -> Result<std::process::Output> {
         let mut cmd = Command::new(&self.binary);
         cmd.args(&args)

@@ -202,8 +202,18 @@ impl Params {
             (Some(a), Some(b)) => Some(Eq {
                 preamp: l(a.preamp, b.preamp),
                 ms: b.ms,
-                main: a.main.iter().zip(&b.main).map(|(x, y)| Band::lerp(x, y, t)).collect(),
-                side: a.side.iter().zip(&b.side).map(|(x, y)| Band::lerp(x, y, t)).collect(),
+                main: a
+                    .main
+                    .iter()
+                    .zip(&b.main)
+                    .map(|(x, y)| Band::lerp(x, y, t))
+                    .collect(),
+                side: a
+                    .side
+                    .iter()
+                    .zip(&b.side)
+                    .map(|(x, y)| Band::lerp(x, y, t))
+                    .collect(),
             }),
             _ => b.clone(),
         };
@@ -472,7 +482,8 @@ mod tests {
     fn tone(f: f64, n: usize, amp: f64) -> Vec<f32> {
         (0..n)
             .flat_map(|i| {
-                let x = (amp * (2.0 * std::f64::consts::PI * f * i as f64 / SAMPLE_RATE).sin()) as f32;
+                let x =
+                    (amp * (2.0 * std::f64::consts::PI * f * i as f64 / SAMPLE_RATE).sin()) as f32;
                 [x, x]
             })
             .collect()
@@ -514,7 +525,10 @@ mod tests {
 
     #[test]
     fn peaking_band_boosts_its_frequency() {
-        let mut rt = Runtime::new(Arc::new(Params::from_config(&eq_config(6.0, BandChannel::Stereo))));
+        let mut rt = Runtime::new(Arc::new(Params::from_config(&eq_config(
+            6.0,
+            BandChannel::Stereo,
+        ))));
         let mut buf = tone(1000.0, 48000, 0.25);
         rt.process(&mut buf, |_, _| {});
         let gain = 20.0 * (rms(&buf[48000..]) / rms(&tone(1000.0, 24000, 0.25))).log10();
@@ -523,7 +537,10 @@ mod tests {
 
     #[test]
     fn side_band_leaves_mono_content_alone() {
-        let mut rt = Runtime::new(Arc::new(Params::from_config(&eq_config(12.0, BandChannel::Side))));
+        let mut rt = Runtime::new(Arc::new(Params::from_config(&eq_config(
+            12.0,
+            BandChannel::Side,
+        ))));
         let mut buf = tone(1000.0, 24000, 0.25);
         let orig = buf.clone();
         rt.process(&mut buf, |_, _| {});
@@ -595,7 +612,8 @@ mod tests {
         // Left-only low tone: the right channel gets ~cross_gain of it.
         let mut buf: Vec<f32> = (0..48000)
             .flat_map(|i| {
-                let x = (0.5 * (2.0 * std::f64::consts::PI * 100.0 * i as f64 / SAMPLE_RATE).sin()) as f32;
+                let x = (0.5 * (2.0 * std::f64::consts::PI * 100.0 * i as f64 / SAMPLE_RATE).sin())
+                    as f32;
                 [x, 0.0]
             })
             .collect();

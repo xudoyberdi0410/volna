@@ -9,9 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{
-    Continuation, PlayerTrack, QueueChanged, QueueSnapshot, Repeat, TrackInput,
-};
+use crate::model::{Continuation, PlayerTrack, QueueChanged, QueueSnapshot, Repeat, TrackInput};
 
 #[derive(Debug, Clone, Default)]
 pub struct Queue {
@@ -157,7 +155,9 @@ impl Queue {
     }
 
     pub fn current_uid(&self) -> Option<&str> {
-        self.index.and_then(|i| self.order.get(i)).map(String::as_str)
+        self.index
+            .and_then(|i| self.order.get(i))
+            .map(String::as_str)
     }
 
     /// Entries in play order.
@@ -590,12 +590,7 @@ mod tests {
         q.enqueue_next(vec![input("n")]);
         assert_eq!(q.at(1).unwrap().title, "n");
         q.enqueue_end(vec![input("z")]);
-        let c_uid = q
-            .items()
-            .into_iter()
-            .find(|t| t.title == "c")
-            .unwrap()
-            .uid;
+        let c_uid = q.items().into_iter().find(|t| t.title == "c").unwrap().uid;
         q.remove(&c_uid);
         q.set_shuffle(false, &mut rng);
         // Original order with "n" right after the current entry "b".

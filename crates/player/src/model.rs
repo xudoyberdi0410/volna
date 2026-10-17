@@ -399,7 +399,9 @@ impl PlayerSettings {
     /// `player_set_settings`: merged one level deep (nested objects replaced whole).
     pub fn merged(&self, patch: &serde_json::Map<String, Value>) -> Result<Self, String> {
         let mut base = serde_json::to_value(self).map_err(|e| e.to_string())?;
-        let obj = base.as_object_mut().expect("settings serialise to an object");
+        let obj = base
+            .as_object_mut()
+            .expect("settings serialise to an object");
         for (k, v) in patch {
             if !obj.contains_key(k) {
                 return Err(format!("unknown setting {k:?}"));
@@ -599,7 +601,11 @@ pub struct PositionEvent {
 )]
 pub enum JournalEntry {
     /// Played ≥ 10 s.
-    History { seq: u64, at: f64, track: PlayerTrack },
+    History {
+        seq: u64,
+        at: f64,
+        track: PlayerTrack,
+    },
     /// A started play closed.
     End {
         seq: u64,

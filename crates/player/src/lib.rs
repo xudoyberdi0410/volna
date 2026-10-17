@@ -98,7 +98,13 @@ pub enum PlayerEvent {
 pub fn init_gstreamer() -> Result<(), String> {
     gst::init().map_err(|e| format!("GStreamer: {e}"))?;
     dsp::register().map_err(|e| format!("volnadsp: {e}"))?;
-    for name in ["playbin3", "autoaudiosink", "audioconvert", "audioresample", "capsfilter"] {
+    for name in [
+        "playbin3",
+        "autoaudiosink",
+        "audioconvert",
+        "audioresample",
+        "capsfilter",
+    ] {
         if gst::ElementFactory::find(name).is_none() {
             return Err(format!("GStreamer element {name} is missing"));
         }
@@ -211,7 +217,8 @@ impl PlayerHandle {
         .await
     }
     pub async fn enqueue(&self, tracks: Vec<TrackInput>, at: EnqueueAt) -> Result<u64, Error> {
-        self.call(|reply| Command::Enqueue { tracks, at, reply }).await
+        self.call(|reply| Command::Enqueue { tracks, at, reply })
+            .await
     }
     pub async fn remove(&self, uid: String) -> Result<u64, Error> {
         self.call(|reply| Command::Remove { uid, reply }).await
@@ -249,7 +256,8 @@ impl PlayerHandle {
         self.call(|reply| Command::SetDsp { config, reply }).await
     }
     pub async fn set_sleep_timer(&self, minutes: Option<f64>) -> Result<Option<f64>, Error> {
-        self.call(|reply| Command::SetSleep { minutes, reply }).await
+        self.call(|reply| Command::SetSleep { minutes, reply })
+            .await
     }
     pub async fn set_continuation(
         &self,
@@ -264,6 +272,11 @@ impl PlayerHandle {
     }
     pub async fn wave_stop(&self) -> Result<(), Error> {
         self.call(Command::WaveStop).await
+    }
+    /// Drops the upcoming wave entries and fetches fresh ones (no-op
+    /// without an active wave).
+    pub async fn wave_requeue(&self) -> Result<u64, Error> {
+        self.call(Command::WaveRequeue).await
     }
     pub async fn wave_dislike(&self) -> Result<(), Error> {
         self.call(Command::WaveDislike).await

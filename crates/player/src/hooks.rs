@@ -60,8 +60,10 @@ pub trait Hooks: Send + Sync + 'static {
         quality: Quality,
     ) -> impl Future<Output = Option<StreamInfo>> + Send;
     /// Tracks to append (wave, radio, autoplay). Errors are `"<code>: <message>"`.
-    fn more(&self, req: MoreRequest)
-    -> impl Future<Output = Result<Vec<TrackInput>, String>> + Send;
+    fn more(
+        &self,
+        req: MoreRequest,
+    ) -> impl Future<Output = Result<Vec<TrackInput>, String>> + Send;
     /// Called in order, one at a time (wave.record and the journal).
     fn on_play_event(&self, ev: PlayEvent) -> impl Future<Output = PlayEventOutcome> + Send;
     fn wave_stop(&self) -> impl Future<Output = ()> + Send;

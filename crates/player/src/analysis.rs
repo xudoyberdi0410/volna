@@ -218,7 +218,8 @@ mod tests {
             let mut r = tap.try_ring().unwrap();
             // 1500 Hz = bin 32 at 48 kHz / 1024.
             for i in 0..4096 {
-                let x = (0.5 * (2.0 * std::f64::consts::PI * 1500.0 * f64::from(i) / 48000.0).sin()) as f32;
+                let x = (0.5 * (2.0 * std::f64::consts::PI * 1500.0 * f64::from(i) / 48000.0).sin())
+                    as f32;
                 r.push(x, x);
             }
         }

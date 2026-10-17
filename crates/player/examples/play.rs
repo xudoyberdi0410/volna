@@ -61,10 +61,18 @@ async fn main() {
     let mut vis = false;
     let mut uris = Vec::new();
     while let Some(a) = args.next() {
-        let mut val = || args.next().expect("flag value").parse::<f64>().expect("number");
+        let mut val = || {
+            args.next()
+                .expect("flag value")
+                .parse::<f64>()
+                .expect("number")
+        };
         match a.as_str() {
             "--crossfade" => {
-                settings.insert("crossfade".into(), serde_json::json!({"enabled": true, "seconds": val()}));
+                settings.insert(
+                    "crossfade".into(),
+                    serde_json::json!({"enabled": true, "seconds": val()}),
+                );
             }
             "--no-gapless" => {
                 settings.insert("gapless".into(), false.into());
@@ -126,7 +134,10 @@ async fn main() {
         settings: dir.join("player.json"),
     };
     let player = Player::spawn(Files(Arc::new(map)), paths);
-    player.set_settings(settings, false).await.expect("settings");
+    player
+        .set_settings(settings, false)
+        .await
+        .expect("settings");
     player.set_dsp(dsp).await.expect("dsp");
     if vis {
         player
@@ -142,7 +153,10 @@ async fn main() {
             .await
             .unwrap();
     }
-    player.set_queue(tracks, 0, true, seek).await.expect("queue");
+    player
+        .set_queue(tracks, 0, true, seek)
+        .await
+        .expect("queue");
 
     let mut events = player.subscribe();
     tokio::spawn(async move {
@@ -153,7 +167,9 @@ async fn main() {
                     "state: {:?} uid {:?} {:.1}/{:?} xfade {} stream {:?}",
                     s.status, s.uid, s.position, s.duration, s.crossfading, s.stream
                 ),
-                PlayerEvent::Queue(q) => println!("queue: rev {} index {} order {:?}", q.rev, q.index, q.order),
+                PlayerEvent::Queue(q) => {
+                    println!("queue: rev {} index {} order {:?}", q.rev, q.index, q.order)
+                }
                 other => println!("{other:?}"),
             }
         }

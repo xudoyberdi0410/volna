@@ -33,7 +33,10 @@ pub enum PlayEvent {
         at: f64,
     },
     /// «Не нравится» on a wave track (sent after its `End`).
-    Dislike { track: PlayerTrack, at: f64 },
+    Dislike {
+        track: PlayerTrack,
+        at: f64,
+    },
 }
 
 #[derive(Debug)]
@@ -64,7 +67,9 @@ impl PlayTracker {
     }
 
     pub fn started(&self) -> bool {
-        self.current.as_ref().is_some_and(|c| c.started_at.is_some())
+        self.current
+            .as_ref()
+            .is_some_and(|c| c.started_at.is_some())
     }
 
     /// A position sample of the active deck playing `track`.
@@ -252,9 +257,16 @@ mod tests {
             assert!(t.tick(&a, false, 150.0, None, f64::from(i)).is_empty());
         }
         // Fifth tick: resumed mid-way, trusted now.
-        assert_eq!(kinds(&t.tick(&a, false, 150.0, None, 5.0)), ["start", "history"]);
+        assert_eq!(
+            kinds(&t.tick(&a, false, 150.0, None, 5.0)),
+            ["start", "history"]
+        );
         match &t.leave(6.0)[..] {
-            [PlayEvent::End { position, ended, .. }] => {
+            [
+                PlayEvent::End {
+                    position, ended, ..
+                },
+            ] => {
                 assert_eq!(*position, 150.0);
                 assert!(!*ended);
             }

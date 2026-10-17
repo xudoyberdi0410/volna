@@ -173,7 +173,10 @@ mod tests {
             let c = Coefs::eq(kind, freq, gain, q, SR);
             let want = c.response_db(f, SR);
             let got = measured_db(&c, f);
-            assert!((got - want).abs() < 0.05, "{kind:?} at {f}: {got} vs {want}");
+            assert!(
+                (got - want).abs() < 0.05,
+                "{kind:?} at {f}: {got} vs {want}"
+            );
         }
     }
 

@@ -270,7 +270,8 @@ mod imp {
                         fade = r.to;
                         rt.ramp = None;
                     } else {
-                        fade = r.from + (r.to - r.from) * r.curve.shape(r.pos as f64 / r.len as f64);
+                        fade =
+                            r.from + (r.to - r.from) * r.curve.shape(r.pos as f64 / r.len as f64);
                     }
                 }
                 master += (target - master) * MASTER_K;
@@ -279,7 +280,11 @@ mod imp {
                 f[1] *= g;
             }
             rt.fade = fade;
-            rt.master = Some(if (master - target).abs() < 1e-6 { target } else { master });
+            rt.master = Some(if (master - target).abs() < 1e-6 {
+                target
+            } else {
+                master
+            });
         }
     }
 }

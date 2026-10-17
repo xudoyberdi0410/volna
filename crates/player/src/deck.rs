@@ -14,6 +14,9 @@ use crate::dsp::{self, VolnaDsp};
 
 pub type DeckId = u64;
 
+/// souphttpsrc `timeout` (s) for the loopback audio server.
+const HTTP_TIMEOUT_S: u32 = 60;
+
 /// From GStreamer threads to the engine.
 #[derive(Debug)]
 pub enum DeckMsg {
@@ -60,7 +63,10 @@ fn make(name: &str) -> Result<gst::Element, String> {
         .map_err(|e| format!("GStreamer element {name}: {e}"))
 }
 
-fn filter_bin(shared: Arc<dsp::Shared>, preserve_pitch: bool) -> Result<(gst::Bin, VolnaDsp), String> {
+fn filter_bin(
+    shared: Arc<dsp::Shared>,
+    preserve_pitch: bool,
+) -> Result<(gst::Bin, VolnaDsp), String> {
     let bin = gst::Bin::new();
     let mut chain = vec![make("audioconvert")?];
     if preserve_pitch {
@@ -155,6 +161,17 @@ impl Deck {
                 let _ = bus_tx.send(DeckMsg::Bus(id, msg.clone()));
             }
             gst::BusSyncReply::Drop
+        });
+
+        // The audio server answers only once yt-dlp resolved the stream,
+        // which through a proxy can take longer than souphttpsrc's 15 s.
+        playbin.connect("source-setup", false, |args| {
+            if let Ok(src) = args[1].get::<gst::Element>()
+                && src.find_property("timeout").is_some()
+            {
+                src.set_property("timeout", HTTP_TIMEOUT_S);
+            }
+            None
         });
 
         let next_up: Arc<Mutex<Option<NextUp>>> = Arc::default();

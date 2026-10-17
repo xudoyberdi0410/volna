@@ -13,13 +13,17 @@ use crate::deck::{Deck, DeckId, DeckMsg, NextUp};
 use crate::dsp::{self, Curve};
 use crate::hooks::{FailureInfo, Hooks, MoreRequest};
 use crate::model::*;
-use crate::persist::{self, Paths, Persisted, SavedContinuation, SavedPosition, SavedQueue, SavedSettings};
+use crate::persist::{
+    self, Paths, Persisted, SavedContinuation, SavedPosition, SavedQueue, SavedSettings,
+};
 use crate::queue::{Queue, Removed};
 use crate::tracker::{PlayEvent, PlayTracker};
 use crate::{Error, PlayerEvent};
 
 const TICK: Duration = Duration::from_millis(250);
-const PREROLL_TIMEOUT: Duration = Duration::from_secs(20);
+/// From load to preroll. Includes the yt-dlp resolve behind the audio
+/// server, which through a slow proxy takes well over 20 s at times.
+const PREROLL_TIMEOUT: Duration = Duration::from_secs(45);
 const SKIP_DELAY: Duration = Duration::from_millis(1200);
 const PERSIST_DEBOUNCE: Duration = Duration::from_secs(2);
 const POSITION_SAVE_EVERY: u32 = 40; // ticks = 10 s
@@ -142,6 +146,8 @@ pub enum Command {
     },
     WaveStop(Reply<()>),
     WaveDislike(Reply<()>),
+    /// The wave settings changed: replace the queued wave tracks.
+    WaveRequeue(Reply<u64>),
     VisualizerStart {
         fps: u32,
         sink: FrameSink,
@@ -248,7 +254,10 @@ fn bad(msg: impl Into<String>) -> Error {
 
 fn validate(tracks: &[TrackInput]) -> Result<(), Error> {
     match tracks.iter().position(|t| !is_video_id(&t.id)) {
-        Some(i) => Err(bad(format!("track {i} has no YouTube id ({:?})", tracks[i].id))),
+        Some(i) => Err(bad(format!(
+            "track {i} has no YouTube id ({:?})",
+            tracks[i].id
+        ))),
         None => Ok(()),
     }
 }
@@ -282,7 +291,12 @@ impl<H: Hooks> Engine<H> {
         let Persisted {
             queue: saved,
             position,
-            settings: SavedSettings { settings, dsp: dsp_config, .. },
+            settings:
+                SavedSettings {
+                    settings,
+                    dsp: dsp_config,
+                    ..
+                },
         } = persisted;
         let queue = Queue::from_state(saved.queue);
         let dsp = dsp::Shared::new(&dsp_config, settings.master_gain());
@@ -501,10 +515,10 @@ impl<H: Hooks> Engine<H> {
     // ---- decks ---------------------------------------------------------------
 
     fn new_deck(&mut self, track: &PlayerTrack) -> Result<Deck, (ErrorKind, String)> {
-        let uri = self
-            .hooks
-            .stream_uri(track, self.quality())
-            .ok_or((ErrorKind::NoYtDlp, "playback is unavailable (no yt-dlp or audio server)".to_owned()))?;
+        let uri = self.hooks.stream_uri(track, self.quality()).ok_or((
+            ErrorKind::NoYtDlp,
+            "playback is unavailable (no yt-dlp or audio server)".to_owned(),
+        ))?;
         let id = self.next_deck;
         self.next_deck += 1;
         let deck = Deck::new(
@@ -636,7 +650,11 @@ impl<H: Hooks> Engine<H> {
                 if play {
                     sb.set_state(gst::State::Playing);
                 }
-                self.state.status = if play { Status::Loading } else { Status::Paused };
+                self.state.status = if play {
+                    Status::Loading
+                } else {
+                    Status::Paused
+                };
                 self.active = Some(sb);
                 self.after_load(&t);
                 return;
@@ -651,7 +669,11 @@ impl<H: Hooks> Engine<H> {
                 deck.set_state(gst::State::Paused);
                 self.after(PREROLL_TIMEOUT, Timer::Preroll(deck.id));
                 self.active = Some(deck);
-                self.state.status = if play { Status::Loading } else { Status::Paused };
+                self.state.status = if play {
+                    Status::Loading
+                } else {
+                    Status::Paused
+                };
             }
             Err((kind, message)) => {
                 self.state.status = Status::Paused;
@@ -895,7 +917,11 @@ impl<H: Hooks> Engine<H> {
                 Origin::Radio,
             ),
             ContinuationKind::None => {
-                let Some(current) = self.queue.current().cloned().filter(|_| self.settings.autoplay)
+                let Some(current) = self
+                    .queue
+                    .current()
+                    .cloned()
+                    .filter(|_| self.settings.autoplay)
                 else {
                     return;
                 };
@@ -921,7 +947,11 @@ impl<H: Hooks> Engine<H> {
         let (hooks, tx, epoch) = (self.hooks.clone(), self.input_tx.clone(), self.cont.epoch);
         tokio::spawn(async move {
             let result = hooks.more(req).await;
-            let _ = tx.send(Input::More { epoch, origin, result });
+            let _ = tx.send(Input::More {
+                epoch,
+                origin,
+                result,
+            });
         });
     }
 
@@ -991,7 +1021,13 @@ impl<H: Hooks> Engine<H> {
 
     // ---- failures ------------------------------------------------------------------
 
-    fn report_error(&mut self, t: &PlayerTrack, kind: ErrorKind, message: String, action: ErrorAction) {
+    fn report_error(
+        &mut self,
+        t: &PlayerTrack,
+        kind: ErrorKind,
+        message: String,
+        action: ErrorAction,
+    ) {
         let err = PlayerError {
             uid: Some(t.uid.clone()),
             track_id: Some(t.id.clone()),
@@ -1034,7 +1070,11 @@ impl<H: Hooks> Engine<H> {
         self.state.status = Status::Loading;
         self.publish_state();
         let fallback = FailureInfo {
-            kind: if decode { ErrorKind::Decode } else { ErrorKind::Other },
+            kind: if decode {
+                ErrorKind::Decode
+            } else {
+                ErrorKind::Other
+            },
             message,
         };
         let (hooks, tx) = (self.hooks.clone(), self.input_tx.clone());
@@ -1107,7 +1147,8 @@ impl<H: Hooks> Engine<H> {
             .queue
             .next_candidate(self.playable())
             .and_then(|i| self.queue.at(i).cloned());
-        let Some(next) = next.filter(|n| n.uid != self.state.uid.clone().unwrap_or_default()) else {
+        let Some(next) = next.filter(|n| n.uid != self.state.uid.clone().unwrap_or_default())
+        else {
             return;
         };
         if self.standby.as_ref().is_some_and(|s| s.uid != next.uid)
@@ -1116,7 +1157,8 @@ impl<H: Hooks> Engine<H> {
             self.retire(d, false);
         }
         // An unknown next duration is checked once its deck has prerolled.
-        let long_enough = dur >= 2.0 * cf.seconds && next.duration.is_none_or(|d| d >= 2.0 * cf.seconds);
+        let long_enough =
+            dur >= 2.0 * cf.seconds && next.duration.is_none_or(|d| d >= 2.0 * cf.seconds);
         if !long_enough {
             return;
         }
@@ -1159,7 +1201,10 @@ impl<H: Hooks> Engine<H> {
             let evs = self.tracker.ended(&uid, now_ms());
             self.play_events(evs);
         }
-        self.after(Duration::from_secs_f64(seconds + 0.3), Timer::CrossfadeDone(old.id));
+        self.after(
+            Duration::from_secs_f64(seconds + 0.3),
+            Timer::CrossfadeDone(old.id),
+        );
         self.retiring.push(old);
         self.queue.set_index(Some(idx));
         self.commit();
@@ -1184,7 +1229,10 @@ impl<H: Hooks> Engine<H> {
         let dur = d.duration();
         let mut changed = false;
         if let Some(dur) = dur
-            && self.state.duration.is_none_or(|old| (old - dur).abs() > 0.5)
+            && self
+                .state
+                .duration
+                .is_none_or(|old| (old - dur).abs() > 0.5)
         {
             self.state.duration = Some(dur);
             changed = true;
@@ -1199,9 +1247,13 @@ impl<H: Hooks> Engine<H> {
         if self.state.status == Status::Playing {
             if let Some(t) = self.queue.current().cloned() {
                 let in_wave = self.in_wave(&t);
-                let evs = self
-                    .tracker
-                    .tick(&t, in_wave, self.state.position, self.state.duration, now_ms());
+                let evs = self.tracker.tick(
+                    &t,
+                    in_wave,
+                    self.state.position,
+                    self.state.duration,
+                    now_ms(),
+                );
                 self.play_events(evs);
             }
             self.crossfade_check(self.state.position);
@@ -1226,7 +1278,17 @@ impl<H: Hooks> Engine<H> {
         let is_standby = self.standby.as_ref().is_some_and(|d| d.id == id);
         match msg.view() {
             V::Error(e) => {
-                let decode = e.error().is::<gst::StreamError>();
+                let decode = matches!(
+                    e.error().kind::<gst::StreamError>(),
+                    Some(
+                        gst::StreamError::Decode
+                            | gst::StreamError::Demux
+                            | gst::StreamError::Format
+                            | gst::StreamError::TypeNotFound
+                            | gst::StreamError::WrongType
+                            | gst::StreamError::CodecNotFound
+                    )
+                );
                 let message = format!("{} ({})", e.error(), e.debug().unwrap_or_default());
                 self.on_deck_error(id, message, decode);
             }
@@ -1391,7 +1453,10 @@ impl<H: Hooks> Engine<H> {
                     self.state.status = Status::Loading;
                     let fallback = FailureInfo {
                         kind: ErrorKind::Timeout,
-                        message: "the stream did not start in 20 s".into(),
+                        message: format!(
+                            "the stream did not start in {} s",
+                            PREROLL_TIMEOUT.as_secs()
+                        ),
                     };
                     self.on_failure(t.uid, None, fallback);
                 }
@@ -1429,7 +1494,10 @@ impl<H: Hooks> Engine<H> {
                         && self.want_play
                     {
                         d.dsp.fade(None, 0.0, SLEEP_FADE_S, Curve::Linear);
-                        self.after(Duration::from_secs_f64(SLEEP_FADE_S + 0.2), Timer::SleepFadeDone(epoch));
+                        self.after(
+                            Duration::from_secs_f64(SLEEP_FADE_S + 0.2),
+                            Timer::SleepFadeDone(epoch),
+                        );
                     } else {
                         self.timer(Timer::SleepFadeDone(epoch));
                     }
@@ -1612,7 +1680,11 @@ impl<H: Hooks> Engine<H> {
             } => {
                 let r = match self.queue.position_of(&uid) {
                     Some(i) => {
-                        self.load(i, position.filter(|p| p.is_finite()).unwrap_or(0.0).max(0.0), true);
+                        self.load(
+                            i,
+                            position.filter(|p| p.is_finite()).unwrap_or(0.0).max(0.0),
+                            true,
+                        );
                         Ok(())
                     }
                     None => Err(Error::new("unknown_uid", uid)),
@@ -1660,7 +1732,9 @@ impl<H: Hooks> Engine<H> {
                         self.update_next_up();
                         Ok(rev)
                     }
-                    None if self.queue.position_of(&uid).is_none() => Err(Error::new("unknown_uid", uid)),
+                    None if self.queue.position_of(&uid).is_none() => {
+                        Err(Error::new("unknown_uid", uid))
+                    }
                     None => Err(bad(format!("index {to} is out of range"))),
                 };
                 let _ = reply.send(r);
@@ -1717,7 +1791,10 @@ impl<H: Hooks> Engine<H> {
                     Some(m) if m.is_finite() && m > 0.0 => {
                         let ends_at = (now_ms() + m * 60_000.0).round();
                         self.sleep = Some((ends_at, self.sleep_gen));
-                        self.after(Duration::from_secs_f64(m * 60.0), Timer::Sleep(self.sleep_gen));
+                        self.after(
+                            Duration::from_secs_f64(m * 60.0),
+                            Timer::Sleep(self.sleep_gen),
+                        );
                         Some(ends_at)
                     }
                     _ => {
@@ -1745,6 +1822,10 @@ impl<H: Hooks> Engine<H> {
                     self.commit();
                 }
                 let _ = r.send(Ok(()));
+            }
+            Command::WaveRequeue(r) => {
+                self.requeue_wave();
+                let _ = r.send(Ok(self.queue.rev()));
             }
             Command::WaveDislike(r) => {
                 if let Some(t) = self.queue.current().cloned() {
@@ -1817,7 +1898,11 @@ impl<H: Hooks> Engine<H> {
         Ok(rev.max(self.queue.rev()))
     }
 
-    fn set_continuation(&mut self, kind: ContinuationKind, seeds: Vec<TrackInput>) -> Result<(), Error> {
+    fn set_continuation(
+        &mut self,
+        kind: ContinuationKind,
+        seeds: Vec<TrackInput>,
+    ) -> Result<(), Error> {
         let seeds = match kind {
             ContinuationKind::Wave => return Err(bad("use player_wave_start for the wave")),
             ContinuationKind::Radio => {
@@ -1829,7 +1914,9 @@ impl<H: Hooks> Engine<H> {
                     .into_iter()
                     .take(50)
                     .enumerate()
-                    .map(|(i, t)| PlayerTrack::from_input(format!("seed{i}"), TrackInput { ui: None, ..t }))
+                    .map(|(i, t)| {
+                        PlayerTrack::from_input(format!("seed{i}"), TrackInput { ui: None, ..t })
+                    })
                     .collect()
             }
             _ => Vec::new(),
@@ -1884,7 +1971,11 @@ impl<H: Hooks> Engine<H> {
         self.vis_gen += 1;
         let epoch = self.vis_gen;
         let fps = fps.clamp(10, 60);
-        let (tap, mut now, tx) = (self.tap.clone(), self.now_tx.subscribe(), self.input_tx.clone());
+        let (tap, mut now, tx) = (
+            self.tap.clone(),
+            self.now_tx.subscribe(),
+            self.input_tx.clone(),
+        );
         let task = tokio::spawn(async move {
             let mut analyzer = Analyzer::new();
             let mut tick = tokio::time::interval(Duration::from_secs_f64(1.0 / f64::from(fps)));

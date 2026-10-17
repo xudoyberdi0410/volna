@@ -32,8 +32,11 @@ fn make_wav(dir: &Path, name: &str, secs: f64, freq: f64) -> PathBuf {
     let p = gst::parse::launch(&desc).unwrap();
     p.set_state(gst::State::Playing).unwrap();
     let bus = p.bus().unwrap();
-    bus.timed_pop_filtered(gst::ClockTime::from_seconds(10), &[gst::MessageType::Eos, gst::MessageType::Error])
-        .unwrap();
+    bus.timed_pop_filtered(
+        gst::ClockTime::from_seconds(10),
+        &[gst::MessageType::Eos, gst::MessageType::Error],
+    )
+    .unwrap();
     p.set_state(gst::State::Null).unwrap();
     path
 }
@@ -92,7 +95,8 @@ impl Hooks for Fake {
         };
         s.events.push(line);
         PlayEventOutcome {
-            requeue_wave: matches!(ev, PlayEvent::End { .. }) && std::mem::take(&mut s.requeue_next_end),
+            requeue_wave: matches!(ev, PlayEvent::End { .. })
+                && std::mem::take(&mut s.requeue_next_end),
         }
     }
     async fn wave_stop(&self) {
@@ -184,14 +188,22 @@ impl Rig {
 #[tokio::test(flavor = "multi_thread")]
 async fn plays_through_the_queue_gaplessly_and_ends() {
     let mut r = rig(&[1.5, 1.5]);
-    let rev = r.player.set_queue(vec![input(0), input(1)], 0, true, None).await.unwrap();
+    let rev = r
+        .player
+        .set_queue(vec![input(0), input(1)], 0, true, None)
+        .await
+        .unwrap();
     assert!(rev >= 1);
     let s = r.wait_status(10, Status::Playing).await;
     let first = s.uid.clone().unwrap();
     // The second entry starts on its own.
     let s = r
         .wait(10, |e| match e {
-            PlayerEvent::State(s) if s.uid.as_deref() != Some(first.as_str()) && s.uid.is_some() => Some(s.clone()),
+            PlayerEvent::State(s)
+                if s.uid.as_deref() != Some(first.as_str()) && s.uid.is_some() =>
+            {
+                Some(s.clone())
+            }
             _ => None,
         })
         .await;
@@ -201,7 +213,11 @@ async fn plays_through_the_queue_gaplessly_and_ends() {
     assert_eq!(snap.queue.index, 1);
     tokio::time::sleep(Duration::from_millis(200)).await;
     let ev = r.events();
-    assert_eq!(ev, ["start t0", "end t0 true", "start t1", "end t1 true"], "{ev:?}");
+    assert_eq!(
+        ev,
+        ["start t0", "end t0 true", "start t1", "end t1 true"],
+        "{ev:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -222,7 +238,11 @@ async fn transport_commands() {
     r.player.seek(4.0, false).await.unwrap();
     tokio::time::sleep(Duration::from_millis(600)).await;
     let snap = r.player.snapshot().await.unwrap();
-    assert!(snap.state.position >= 4.0 && snap.state.position < 5.5, "{}", snap.state.position);
+    assert!(
+        snap.state.position >= 4.0 && snap.state.position < 5.5,
+        "{}",
+        snap.state.position
+    );
     // > 3 s: prev restarts the track.
     r.player.prev().await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -243,9 +263,18 @@ async fn transport_commands() {
     let rev = r.player.set_shuffle(true).await.unwrap();
     let rev2 = r.player.set_repeat(Repeat::All).await.unwrap();
     assert_eq!(rev2, rev + 1);
-    let uid = r.player.snapshot().await.unwrap().queue.items[2].uid.clone();
+    let uid = r.player.snapshot().await.unwrap().queue.items[2]
+        .uid
+        .clone();
     r.player.remove(uid.clone()).await.unwrap();
-    assert!(r.player.remove(uid).await.unwrap_err().to_string().starts_with("unknown_uid: "));
+    assert!(
+        r.player
+            .remove(uid)
+            .await
+            .unwrap_err()
+            .to_string()
+            .starts_with("unknown_uid: ")
+    );
     let err = r
         .player
         .enqueue(
@@ -269,7 +298,10 @@ async fn autoplay_continues_at_the_end() {
         .set_settings(patch.as_object().unwrap().clone(), false)
         .await
         .unwrap();
-    r.player.set_queue(vec![input(0)], 0, true, None).await.unwrap();
+    r.player
+        .set_queue(vec![input(0)], 0, true, None)
+        .await
+        .unwrap();
     let q = r
         .wait(10, |e| match e {
             PlayerEvent::Queue(q) if q.order.len() == 2 => Some(q.clone()),
@@ -279,7 +311,9 @@ async fn autoplay_continues_at_the_end() {
     assert_eq!(q.added[0].origin, Origin::Autoplay);
     let s = r
         .wait(10, |e| match e {
-            PlayerEvent::State(s) if s.track_id.as_deref() == Some(id(1).as_str()) && s.status == Status::Playing => {
+            PlayerEvent::State(s)
+                if s.track_id.as_deref() == Some(id(1).as_str()) && s.status == Status::Playing =>
+            {
                 Some(s.clone())
             }
             _ => None,
@@ -300,7 +334,10 @@ async fn failures_skip_and_mark_unavailable() {
         title: "bad".into(),
         ..Default::default()
     };
-    r.player.set_queue(vec![bad, input(0)], 0, true, None).await.unwrap();
+    r.player
+        .set_queue(vec![bad, input(0)], 0, true, None)
+        .await
+        .unwrap();
     let err = r
         .wait(10, |e| match e {
             PlayerEvent::Error(err) => Some(err.clone()),
@@ -374,19 +411,28 @@ async fn crossfade_overlaps_and_advances_once() {
     .await;
     r.wait_status(10, Status::Ended).await;
     let ev = r.events();
-    assert_eq!(ev.iter().filter(|e| e.starts_with("start")).count(), 2, "{ev:?}");
+    assert_eq!(
+        ev.iter().filter(|e| e.starts_with("start")).count(),
+        2,
+        "{ev:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wave_start_stop_and_requeue() {
     let mut r = rig(&[3.0, 3.0, 3.0, 3.0]);
+    // Without a wave, requeue changes nothing.
+    let rev0 = r.player.snapshot().await.unwrap().queue.rev;
+    assert_eq!(r.player.wave_requeue().await.unwrap(), rev0);
     // Cold: no candidates.
     let err = r.player.wave_start(5).await.unwrap_err();
     assert_eq!(err.code, "no_candidates");
     r.fake.0.lock().unwrap().more = vec![input(0), input(1), input(2)];
     r.player.wave_start(5).await.unwrap();
-    r.wait(5, |e| matches!(e, PlayerEvent::Wave { active: true }).then_some(()))
-        .await;
+    r.wait(5, |e| {
+        matches!(e, PlayerEvent::Wave { active: true }).then_some(())
+    })
+    .await;
     let snap = r.player.snapshot().await.unwrap();
     assert!(snap.wave.active);
     assert!(snap.queue.items.iter().all(|t| t.origin == Origin::Wave));
@@ -408,11 +454,27 @@ async fn wave_start_stop_and_requeue() {
     let snap = r.player.snapshot().await.unwrap();
     let ids: Vec<&str> = snap.queue.items.iter().map(|t| t.id.as_str()).collect();
     assert_eq!(ids, [id(0), id(1), id(3)]);
+    // The settings changed: player_wave_requeue swaps the upcoming wave entries.
+    r.fake.0.lock().unwrap().requeue_more = vec![input(2)];
+    r.player.wave_requeue().await.unwrap();
+    r.wait(10, |e| match e {
+        PlayerEvent::Queue(q) if q.added.iter().any(|t| t.id == id(2)) => Some(()),
+        _ => None,
+    })
+    .await;
+    let snap = r.player.snapshot().await.unwrap();
+    let ids: Vec<&str> = snap.queue.items.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, [id(0), id(1), id(2)]);
     // Something else plays: the wave stops.
-    r.player.enqueue(vec![input(2)], EnqueueAt::Next).await.unwrap();
+    r.player
+        .enqueue(vec![input(2)], EnqueueAt::Next)
+        .await
+        .unwrap();
     r.player.next().await.unwrap();
-    r.wait(10, |e| matches!(e, PlayerEvent::Wave { active: false }).then_some(()))
-        .await;
+    r.wait(10, |e| {
+        matches!(e, PlayerEvent::Wave { active: false }).then_some(())
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(r.events().contains(&"wave_stop".to_owned()));
 }
@@ -420,7 +482,10 @@ async fn wave_start_stop_and_requeue() {
 #[tokio::test(flavor = "multi_thread")]
 async fn restores_paused_at_the_saved_position() {
     let mut r = rig(&[8.0]);
-    r.player.set_queue(vec![input(0)], 0, true, None).await.unwrap();
+    r.player
+        .set_queue(vec![input(0)], 0, true, None)
+        .await
+        .unwrap();
     r.wait_status(10, Status::Playing).await;
     tokio::time::sleep(Duration::from_millis(1500)).await;
     r.player.shutdown().await.unwrap();
@@ -460,7 +525,10 @@ async fn visualizer_frames_flow_while_subscribed() {
         )
         .await
         .unwrap();
-    r.player.set_queue(vec![input(0)], 0, true, None).await.unwrap();
+    r.player
+        .set_queue(vec![input(0)], 0, true, None)
+        .await
+        .unwrap();
     r.wait_status(10, Status::Playing).await;
     tokio::time::sleep(Duration::from_millis(800)).await;
     r.player.visualizer_stop().await.unwrap();

@@ -23,6 +23,9 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::Value;
 
+#[cfg(feature = "jni")]
+mod jni;
+
 use crate::core::{Core, CoreConfig, Dirs};
 use crate::js::CallbackJs;
 use crate::player::forward::EventSink;
@@ -176,10 +179,55 @@ struct InitConfig {
     /// A `tracing` filter (e.g. `"info"`) to log to stderr; none by default.
     #[serde(default)]
     log: Option<String>,
+    /// Debug builds only: route everything through this proxy URL
+    /// (`socks5h://10.0.2.2:1081` from the Android emulator to the host).
+    /// Mobile is direct-only; this exists for testing from a country where
+    /// YouTube Music is blocked. Ignored (with a warning) in release builds.
+    #[serde(default)]
+    dev_proxy: Option<String>,
+    /// Debug builds only: resolve every track to this URL (it must answer
+    /// HTTP Range requests), to test the platform player through the
+    /// loopback server without a real stream resolver. Ignored in release.
+    #[serde(default)]
+    dev_stream_url: Option<String>,
 }
 
 fn yes() -> bool {
     true
+}
+
+/// `devStreamUrl`: every track is the same file.
+struct DevStream(String);
+
+impl volna_streams::Backend for DevStream {
+    async fn resolve(
+        &self,
+        _id: &volna_streams::VideoId,
+        _quality: volna_streams::Quality,
+        _proxy: Option<&str>,
+    ) -> volna_streams::Result<volna_streams::ResolvedStream> {
+        Ok(volna_streams::ResolvedStream {
+            url: self.0.clone(),
+            delivery: volna_streams::Delivery::Url,
+            format_id: "dev".into(),
+            mime: "audio/webm".into(),
+            codec: Some("opus".into()),
+            bitrate_kbps: None,
+            filesize: None,
+            expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+            user_agent: None,
+        })
+    }
+}
+
+fn dev_backend(url: Option<String>) -> Option<crate::StreamBackend> {
+    let url = url.filter(|u| !u.is_empty())?;
+    if !cfg!(debug_assertions) {
+        tracing::warn!("devStreamUrl is ignored in release builds");
+        return None;
+    }
+    tracing::warn!("devStreamUrl on: every track plays {url}");
+    Some(crate::StreamBackend::injected(DevStream(url)))
 }
 
 thread_local! {
@@ -228,7 +276,7 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         proxy: false,
         audio_server: config.audio_server,
         // The mobile stream resolver plugs in here, built with `js`.
-        backend: None,
+        backend: dev_backend(config.dev_stream_url.clone()),
     };
     let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         runtime.block_on(Core::start(core_config, Some(output.clone())))
@@ -238,6 +286,9 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         Ok(Err(e)) => return fail(format!("{e:#}")),
         Err(_) => return fail("panic while starting the core"),
     };
+    if let Some(url) = config.dev_proxy.filter(|u| !u.is_empty()) {
+        apply_dev_proxy(&runtime, &core, url);
+    }
     let event: Slot<EventFn> = Arc::default();
     core.set_event_sink(Some(Arc::new(FfiEvents(event.clone()))));
     let player: Slot<PlayerFn> = Arc::default();
@@ -262,6 +313,19 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
     }))
 }
 
+/// `devProxy`: debug builds only, bypassing the direct-only rule.
+fn apply_dev_proxy(runtime: &tokio::runtime::Runtime, core: &Arc<Core>, url: String) {
+    if !cfg!(debug_assertions) {
+        tracing::warn!("devProxy is ignored in release builds");
+        return;
+    }
+    let config = volna_net::ProxyConfig::Url(url);
+    match runtime.block_on(crate::network::switch(&core.app, config)) {
+        Ok(()) => tracing::warn!(proxy = ?core.app.net.status().proxy, "devProxy on"),
+        Err(e) => tracing::error!("devProxy: {e}"),
+    }
+}
+
 /// Why the last [`volna_core_init`] on this thread failed, or NULL.
 /// Free with [`volna_core_free_string`].
 #[unsafe(no_mangle)]
@@ -276,6 +340,19 @@ pub extern "C" fn volna_core_last_error() -> *mut c_char {
 unsafe fn handle<'a>(h: *mut VolnaCore) -> Option<&'a VolnaCore> {
     // SAFETY: the caller promises a live handle.
     unsafe { h.as_ref() }
+}
+
+/// The loopback audio server's base URL (`http://127.0.0.1:<port>/`), or
+/// NULL without one. Free with [`volna_core_free_string`].
+///
+/// # Safety
+/// `handle` is NULL or a live handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn volna_core_stream_base(handle: *mut VolnaCore) -> *mut c_char {
+    // SAFETY: forwarded from the caller.
+    unsafe { self::handle(handle) }
+        .and_then(|h| h.core.app.stream_base.clone())
+        .map_or(std::ptr::null_mut(), c_string)
 }
 
 /// Where [`volna_core_call`] replies go (NULL `callback`: dropped).
@@ -715,6 +792,95 @@ mod tests {
             if let Got::Player(cmd) = g {
                 panic!("unexpected player command {cmd}");
             }
+        }
+    }
+
+    #[test]
+    fn stream_base_and_dev_proxy() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = cstr(
+            &serde_json::json!({
+                "dataDir": dir.path(),
+                "devProxy": "socks5h://127.0.0.1:9",
+            })
+            .to_string(),
+        );
+        let (s, rx) = mpsc::channel();
+        let user = Box::into_raw(Box::new(Mutex::new(s))) as *mut c_void;
+        // SAFETY: valid strings; `user` outlives the handle.
+        unsafe {
+            let h = volna_core_init(config.as_ptr());
+            assert!(!h.is_null(), "{}", take(volna_core_last_error()));
+            // No stream backend in this build, so no audio server either.
+            assert!(volna_core_stream_base(h).is_null());
+            volna_core_set_reply_callback(h, Some(on_reply), user);
+            // Tests are debug builds, where devProxy applies.
+            let cmd = cstr("net_settings");
+            volna_core_call(h, 1, cmd.as_ptr(), std::ptr::null());
+            match wait(&rx, |g| matches!(g, Got::Reply(1, ..))) {
+                Got::Reply(_, true, v) => {
+                    assert_eq!(v["status"]["mode"], "url", "{v}");
+                    assert_eq!(v["status"]["proxy"], "socks5h://127.0.0.1:9");
+                }
+                other => panic!("{other:?}"),
+            }
+            volna_core_shutdown(h);
+            assert!(volna_core_stream_base(std::ptr::null_mut()).is_null());
+            drop(Box::from_raw(user as *mut Tx));
+        }
+    }
+
+    /// The platform player contract end to end over the C ABI: with a
+    /// stream backend (`devStreamUrl`), a queue loads the loopback URL into
+    /// the platform player, and its reports drive the engine.
+    #[test]
+    fn platform_player_over_ffi() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = cstr(
+            &serde_json::json!({
+                "dataDir": dir.path(),
+                "devStreamUrl": "http://127.0.0.1:9/test.webm",
+            })
+            .to_string(),
+        );
+        let (s, rx) = mpsc::channel();
+        let user = Box::into_raw(Box::new(Mutex::new(s))) as *mut c_void;
+        // SAFETY: valid strings; `user` outlives the handle.
+        unsafe {
+            let h = volna_core_init(config.as_ptr());
+            assert!(!h.is_null(), "{}", take(volna_core_last_error()));
+            let base = take(volna_core_stream_base(h));
+            assert!(base.starts_with("http://127.0.0.1:"), "{base}");
+            volna_core_set_reply_callback(h, Some(on_reply), user);
+            volna_core_set_event_callback(h, Some(on_event), user);
+            volna_core_set_player_callback(h, Some(on_player), user);
+
+            let set_queue = cstr("player_set_queue");
+            let q = cstr(
+                r#"{"tracks":[{"id":"dQw4w9WgXcQ","title":"A"}],"startIndex":0,"play":true}"#,
+            );
+            volna_core_call(h, 1, set_queue.as_ptr(), q.as_ptr());
+            let load = wait(&rx, |g| matches!(g, Got::Player(c) if c["op"] == "load"));
+            let Got::Player(load) = load else { unreachable!() };
+            let url = load["url"].as_str().unwrap();
+            assert!(url.starts_with(&base), "{url} not under {base}");
+            assert!(url.contains("dQw4w9WgXcQ"), "{url}");
+
+            // Ready → the engine asks the player to play; playing → state.
+            let ready = cstr(r#"{"type":"ready","durationMs":60000}"#);
+            assert!(volna_core_player_report(h, ready.as_ptr()));
+            wait(&rx, |g| matches!(g, Got::Player(c) if c["op"] == "play"));
+            let playing = cstr(r#"{"type":"playing"}"#);
+            assert!(volna_core_player_report(h, playing.as_ptr()));
+            wait(&rx, |g| {
+                matches!(g, Got::Event(n, p) if n == "player:state" && p["status"] == "playing")
+            });
+            // A pause from the UI reaches the player.
+            let pause = cstr("player_pause");
+            volna_core_call(h, 2, pause.as_ptr(), std::ptr::null());
+            wait(&rx, |g| matches!(g, Got::Player(c) if c["op"] == "pause"));
+            volna_core_shutdown(h);
+            drop(Box::from_raw(user as *mut Tx));
         }
     }
 }

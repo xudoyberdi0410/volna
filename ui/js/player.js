@@ -919,6 +919,9 @@ export class Player {
                 this._volumeQueued = false;
                 return { patch: { volume: this._volume, muted: this._muted } };
             })
+            .then((settings) => {
+                if (settings) this.settings = settings;
+            })
             .catch(warn('volume'))
             .finally(() => {
                 this._volumeInFlight -= 1;

@@ -138,6 +138,20 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(quality.quality, "low")
     }
 
+    func testYouTubeSessionCommands() async throws {
+        let signedOut = try await api.youtubeAuthStatus()
+        XCTAssertFalse(signedOut.signedIn)
+        // Not a session (no LOGIN_INFO): saved, but not signed in.
+        let partial = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tf6=1\n"
+        let s = try await api.youtubeSetCookies(partial)
+        XCTAssertFalse(s.signedIn)
+        let file = dir.appendingPathComponent("youtube-cookies.txt")
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), partial)
+        let out = try await api.youtubeSetCookies("")
+        XCTAssertFalse(out.signedIn)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testImagesThroughProto() async throws {
         let r = await core.proto("volna://img/?s=80")
         XCTAssertEqual(r.status, 400)

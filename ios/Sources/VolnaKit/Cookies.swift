@@ -29,12 +29,17 @@ public enum NetscapeCookies {
         return (["# Netscape HTTP Cookie File"] + lines).joined(separator: "\n") + "\n"
     }
 
-    /// True when the text holds a signed-in session (`SAPISID` is what the
-    /// resolver signs requests with).
+    /// True when the text holds a signed-in YouTube session: `LOGIN_INFO`
+    /// and one of the SAPISID cookies, as the core (and yt-dlp) checks.
     public static func signedIn(_ text: String) -> Bool {
-        text.split(separator: "\n").contains { line in
-            let f = line.split(separator: "\t", omittingEmptySubsequences: false)
-            return f.count >= 7 && (f[5] == "SAPISID" || f[5] == "__Secure-3PAPISID")
+        var names = Set<Substring>()
+        for line in text.split(separator: "\n") {
+            let l = line.hasPrefix("#HttpOnly_") ? line.dropFirst("#HttpOnly_".count) : line
+            let f = l.split(separator: "\t", omittingEmptySubsequences: false)
+            guard f.count >= 7, f[0].lowercased().hasSuffix("youtube.com") else { continue }
+            names.insert(f[5])
         }
+        return names.contains("LOGIN_INFO")
+            && !names.isDisjoint(with: ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"])
     }
 }

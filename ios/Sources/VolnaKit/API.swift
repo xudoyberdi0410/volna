@@ -330,3 +330,22 @@ public extension API {
     @discardableResult
     func yandexImportCancel() async throws -> Bool { try await run("yandex_import_cancel").bool ?? false }
 }
+
+// MARK: - YouTube session (`youtube_*`)
+
+public struct YouTubeAuth: Decodable, Sendable, Equatable {
+    public var signedIn: Bool
+    /// The account's display name, when YouTube Music tells it.
+    public var account: String?
+}
+
+public extension API {
+    /// The Google session from the sign-in web view (Netscape cookies.txt);
+    /// `""` signs out. The core saves it in `<dataDir>/youtube-cookies.txt`.
+    @discardableResult
+    func youtubeSetCookies(_ cookies: String) async throws -> YouTubeAuth {
+        try await get("youtube_set_cookies", ["cookies": .string(cookies)])
+    }
+
+    func youtubeAuthStatus() async throws -> YouTubeAuth { try await get("youtube_auth_status") }
+}

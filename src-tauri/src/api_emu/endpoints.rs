@@ -133,8 +133,10 @@ impl ApiEmu {
 
     // ---- endpoints -------------------------------------------------------
 
-    /// `/search/?q|s|a|al|p|v|i=` (§3.1). Every bucket is always present,
+    /// `/search/?q|s|vt|a|al|p|v|i=` (§3.1). Every bucket is always present,
     /// because the UI falls back to "any bucket" when the asked one is missing.
+    /// `vt` is ours: YouTube Music's video filter, emitted as tracks like every
+    /// video; the Yandex import uses it for songs only uploaded as videos.
     async fn search(&self, q: &Query) -> ApiResult<Value> {
         let mut buckets = SearchBuckets::default();
         if let Some(term) = q.get("q").filter(|t| !t.trim().is_empty()) {
@@ -161,6 +163,7 @@ impl ApiEmu {
         } else {
             let scoped = [
                 ("s", SearchFilter::Songs),
+                ("vt", SearchFilter::Videos),
                 ("a", SearchFilter::Artists),
                 ("al", SearchFilter::Albums),
                 ("p", SearchFilter::Playlists),

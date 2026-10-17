@@ -497,12 +497,17 @@ export class LosslessAPI {
         };
     }
 
+    // `videos: true` searches YouTube Music's videos instead of its songs, still
+    // shaped as tracks (`vt=` is a Volna extension of the search endpoint).
     async searchTracks(query, options = {}) {
-        const cached = await this.cache.get('search_tracks', query);
+        const { videos = false, ...fetchOptions } = options;
+        const cacheKey = videos ? 'search_video_tracks' : 'search_tracks';
+        const cached = await this.cache.get(cacheKey, query);
         if (cached) return cached;
 
         try {
-            const response = await this.fetchWithRetry(`/search/?s=${encodeURIComponent(query)}`, options);
+            const param = videos ? 'vt' : 's';
+            const response = await this.fetchWithRetry(`/search/?${param}=${encodeURIComponent(query)}`, fetchOptions);
             const data = await response.json();
             const normalized = this.normalizeSearchResponse(data, 'tracks');
             const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
@@ -512,7 +517,7 @@ export class LosslessAPI {
                 items: enrichedTracks,
             };
 
-            await this.cache.set('search_tracks', query, result);
+            await this.cache.set(cacheKey, query, result);
             return result;
         } catch (error) {
             if (error.name === 'AbortError') throw error;

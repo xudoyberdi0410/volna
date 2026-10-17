@@ -19,9 +19,9 @@ InnerTube resolver is not written yet, so on mobile `backend` is `None` for now
 and playback answers `no_ytdlp` (see "Not done").
 
 `volna-player` builds without GStreamer when its `gstreamer` feature is off,
-which is how the core uses it. `volna-streams` still compiles its yt-dlp module
-unconditionally; once phase 5 puts it behind a `volna-streams/ytdlp` feature, make
-`volna-core/ytdlp` forward to it.
+and `volna-streams` without yt-dlp when its `ytdlp` feature is off; both are
+workspace dependencies with `default-features = false`, and `volna-core/ytdlp`
+turns `volna-streams/ytdlp` on (the daemon and `src-tauri` ask for it directly).
 
 ## One-time setup
 

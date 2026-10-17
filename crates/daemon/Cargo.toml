@@ -29,7 +29,7 @@ dirs = "7"
 mimalloc = "0.1.52"
 volna-ytm = { workspace = true }
 volna-net = { workspace = true }
-volna-streams = { workspace = true }
+volna-streams = { workspace = true, features = ["ytdlp"] }
 volna-player = { workspace = true, features = ["gstreamer"] }
 volna-core = { workspace = true }
 

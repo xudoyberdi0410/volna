@@ -15,8 +15,7 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 default = ["ytdlp", "ffi"]
 # Desktop: stream resolution, cookies and the Yandex browser session through
 # yt-dlp. Mobile builds use `--no-default-features` and inject a backend.
-# (Forwards to `volna-streams/ytdlp` once that crate gates yt-dlp.)
-ytdlp = []
+ytdlp = ["volna-streams/ytdlp"]
 # The C ABI in `ffi.rs` (`include/volna_core.h`).
 ffi = []
 

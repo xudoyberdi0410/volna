@@ -9,9 +9,9 @@ import '../api/network.dart';
 import '../api/scrobble.dart';
 import '../api/settings.dart';
 import '../api/yandex.dart';
-import '../ipc/proto_image.dart';
 import '../ipc/transport.dart';
 import 'connection.dart';
+import 'images.dart';
 
 final networkApiProvider = Provider((ref) => NetworkApi(ref.watch(transportProvider)));
 final scrobbleApiProvider = Provider((ref) => ScrobbleApi(ref.watch(transportProvider)));
@@ -19,9 +19,8 @@ final yandexApiProvider = Provider((ref) => YandexApi(ref.watch(transportProvide
 final waveSettingsApiProvider = Provider((ref) => WaveSettingsApi(ref.watch(transportProvider)));
 final legacyApiProvider = Provider((ref) => LegacyApi(ref.watch(transportProvider)));
 
-/// Images of the cold-start artist picker (through `volna://img`).
-final settingsImageCacheProvider =
-    Provider((ref) => ProtoImageCache(ref.watch(transportProvider)));
+/// Images of the cold-start artist picker: the app's one cache.
+final settingsImageCacheProvider = protoImageCacheProvider;
 
 /// Russian text of a daemon error, without the `code:` prefix.
 String errorText(Object e) => switch (e) {

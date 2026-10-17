@@ -25,6 +25,7 @@ mod session;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -82,12 +83,18 @@ pub struct InnerTube {
     inner: Arc<Inner>,
 }
 
+/// Cached ytcfg per exit (proxy URL), with the cookie generation it was fetched with.
+type Sessions = HashMap<Option<String>, (u64, Arc<Session>)>;
+
 struct Inner {
     js: Arc<dyn JsRuntime>,
     opts: InnerTubeOptions,
     cookies: RwLock<Option<Arc<CookieJar>>>,
     clients: Mutex<HashMap<Option<String>, reqwest::Client>>,
-    sessions: tokio::sync::Mutex<HashMap<Option<String>, Arc<Session>>>,
+    /// Cached ytcfg per exit, tagged with the cookie generation it was fetched with.
+    sessions: tokio::sync::Mutex<Sessions>,
+    /// Bumped by `set_cookies`.
+    cookie_generation: AtomicU64,
     players: PlayerCache,
     /// One `base.js` download at a time.
     player_fetch: tokio::sync::Mutex<()>,
@@ -104,14 +111,15 @@ impl InnerTube {
                 cookies: RwLock::new(None),
                 clients: Mutex::default(),
                 sessions: tokio::sync::Mutex::default(),
+                cookie_generation: AtomicU64::new(0),
                 player_fetch: tokio::sync::Mutex::default(),
                 pot: PotProvider::default(),
             }),
         }
     }
 
-    /// Uses a logged-in browser session (or none). Drops the cached `ytcfg`,
-    /// which depends on it.
+    /// Uses a logged-in browser session (or none), from the next resolve on.
+    /// The cached `ytcfg`, which depends on it, is fetched again.
     pub fn set_cookies(&self, jar: Option<CookieJar>) {
         let jar = jar.filter(|j| !j.is_empty()).map(Arc::new);
         *self
@@ -119,9 +127,7 @@ impl InnerTube {
             .cookies
             .write()
             .unwrap_or_else(|e| e.into_inner()) = jar;
-        if let Ok(mut s) = self.inner.sessions.try_lock() {
-            s.clear();
-        }
+        self.inner.cookie_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn cookies(&self) -> Option<Arc<CookieJar>> {
@@ -250,6 +256,31 @@ impl InnerTube {
         Ok(stream)
     }
 
+    /// The signed-in account's display name (YouTube Music's
+    /// `account/account_menu`); `None` without a signed-in session.
+    pub async fn account_name(&self, proxy: Option<&str>) -> Result<Option<String>> {
+        let Some(cookies) = self.cookies().filter(|c| c.is_logged_in()) else {
+            return Ok(None);
+        };
+        let http = self.client(proxy)?;
+        let session = self.session(&http, proxy, Some(&cookies), false).await?;
+        let body = serde_json::json!({ "context": session.context });
+        let resp = http
+            .post(format!(
+                "{MUSIC_ORIGIN}/youtubei/v1/account/account_menu?prettyPrint=false"
+            ))
+            .timeout(API_TIMEOUT)
+            .headers(session.api_headers(&self.inner.opts.user_agent, Some(&cookies)))
+            .body(body.to_string())
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(StreamError::UpstreamStatus(resp.status().as_u16()));
+        }
+        let menu: serde_json::Value = resp.json().await?;
+        Ok(account_name(&menu))
+    }
+
     fn client(&self, proxy: Option<&str>) -> Result<reqwest::Client> {
         let key = proxy.map(str::to_owned);
         let mut clients = self.inner.clients.lock().unwrap_or_else(|e| e.into_inner());
@@ -278,15 +309,17 @@ impl InnerTube {
         refresh: bool,
     ) -> Result<Arc<Session>> {
         let key = proxy.map(str::to_owned);
+        let generation = self.inner.cookie_generation.load(Ordering::Acquire);
         let mut sessions = self.inner.sessions.lock().await;
         if !refresh
-            && let Some(s) = sessions.get(&key)
+            && let Some((g, s)) = sessions.get(&key)
+            && *g == generation
             && s.fetched_at.elapsed() < SESSION_TTL
         {
             return Ok(s.clone());
         }
         let session = Arc::new(self.fetch_session(http, cookies).await?);
-        sessions.insert(key, session.clone());
+        sessions.insert(key, (generation, session.clone()));
         Ok(session)
     }
 
@@ -431,6 +464,25 @@ fn pot_binding(session: &Session, cookies: Option<&CookieJar>, id: &VideoId) -> 
         .unwrap_or_else(|| id.as_str().to_owned())
 }
 
+/// `activeAccountHeaderRenderer.accountName` anywhere in an account menu.
+fn account_name(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Object(m) => {
+            if let Some(h) = m.get("activeAccountHeaderRenderer") {
+                let name = h
+                    .pointer("/accountName/runs/0/text")
+                    .or_else(|| h.pointer("/accountName/simpleText"));
+                if let Some(name) = name.and_then(|n| n.as_str()) {
+                    return Some(name.to_owned());
+                }
+            }
+            m.values().find_map(account_name)
+        }
+        serde_json::Value::Array(a) => a.iter().find_map(account_name),
+        _ => None,
+    }
+}
+
 impl crate::Backend for InnerTube {
     fn resolve(
         &self,
@@ -445,6 +497,15 @@ impl crate::Backend for InnerTube {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_account_name() {
+        let menu = serde_json::json!({"actions": [{"openPopupAction": {"popup": {
+            "multiPageMenuRenderer": {"header": {"activeAccountHeaderRenderer": {
+                "accountName": {"runs": [{"text": "Khudoberdi"}]}}}}}}}]});
+        assert_eq!(account_name(&menu).as_deref(), Some("Khudoberdi"));
+        assert_eq!(account_name(&serde_json::json!({"actions": []})), None);
+    }
 
     #[test]
     fn pot_binding_follows_yt_dlp() {

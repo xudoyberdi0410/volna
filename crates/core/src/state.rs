@@ -14,9 +14,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use volna_net::{NetManager, NetOptions};
-use volna_streams::{Backend, ImageCache, Quality, ResolvedStream, StreamService, VideoId};
 #[cfg(feature = "ytdlp")]
 use volna_streams::YtDlp;
+use volna_streams::{Backend, ImageCache, Quality, ResolvedStream, StreamService, VideoId};
 use volna_ytm::YtmClient;
 
 pub type Streams = StreamService<StreamBackend, NetManager>;
@@ -50,6 +50,10 @@ impl<B: Backend> DynBackend for B {
 pub enum StreamBackend {
     #[cfg(feature = "ytdlp")]
     YtDlp(YtDlp),
+    /// The in-process resolver (mobile); kept by type so the YouTube
+    /// session can be swapped at run time (`youtube_set_cookies`).
+    #[cfg(feature = "innertube")]
+    InnerTube(volna_streams::InnerTube),
     Injected(Arc<dyn DynBackend>),
 }
 
@@ -78,7 +82,16 @@ impl StreamBackend {
     pub fn ytdlp(&self) -> Option<&YtDlp> {
         match self {
             Self::YtDlp(y) => Some(y),
-            Self::Injected(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The InnerTube resolver, when that is the backend.
+    #[cfg(feature = "innertube")]
+    pub fn innertube(&self) -> Option<&volna_streams::InnerTube> {
+        match self {
+            Self::InnerTube(b) => Some(b),
+            _ => None,
         }
     }
 }
@@ -93,6 +106,8 @@ impl Backend for StreamBackend {
         match self {
             #[cfg(feature = "ytdlp")]
             Self::YtDlp(y) => Backend::resolve(y, id, quality, proxy).await,
+            #[cfg(feature = "innertube")]
+            Self::InnerTube(b) => b.resolve(id, quality, proxy).await,
             Self::Injected(b) => b.resolve_dyn(id, quality, proxy).await,
         }
     }

@@ -1,14 +1,16 @@
 //! The tray: «Сейчас: …», play/pause, next, previous, show, quit.
 //!
-//! Linux: a StatusNotifierItem through `ksni`, so a left click shows (or
-//! re-creates) the window and the menu stays on the right click
-//! (decision §8.1). Windows: Tauri's tray icon, left click = show.
+//! Linux: a StatusNotifierItem through `ksni` (pure D-Bus), so a left click
+//! shows (or starts) the window and the menu stays on the right click
+//! (decision §8.1). Windows has no tray in the daemon yet (§9).
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
-use tauri::AppHandle;
 use volna_player::{NowPlaying, PlayerHandle, Status};
+
+use crate::daemon::Daemon;
 
 /// Menu labels for the current state.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -56,7 +58,7 @@ type Action = fn(PlayerHandle) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
 fn spawn_cmd(player: &Option<PlayerHandle>, f: Action) {
     if let Some(p) = player.clone() {
-        tauri::async_runtime::spawn(f(p));
+        tokio::spawn(f(p));
     }
 }
 
@@ -78,22 +80,23 @@ fn prev(p: PlayerHandle) -> Pin<Box<dyn Future<Output = ()> + Send>> {
     })
 }
 
-pub fn start(app: &AppHandle, player: Option<PlayerHandle>) {
-    imp::start(app, player);
+pub fn start(daemon: Arc<Daemon>, player: Option<PlayerHandle>) {
+    imp::start(daemon, player);
 }
 
 #[cfg(target_os = "linux")]
 mod imp {
+    use std::sync::Arc;
+
     use ksni::menu::{MenuItem, StandardItem};
     use ksni::{Icon, ToolTip, Tray, TrayMethods};
-    use tauri::AppHandle;
     use volna_player::PlayerHandle;
 
     use super::{Labels, next, prev, spawn_cmd, toggle};
-    use crate::player::window;
+    use crate::daemon::Daemon;
 
     struct VolnaTray {
-        app: AppHandle,
+        daemon: Arc<Daemon>,
         player: Option<PlayerHandle>,
         labels: Labels,
         icon: Vec<Icon>,
@@ -121,7 +124,7 @@ mod imp {
         }
 
         fn activate(&mut self, _x: i32, _y: i32) {
-            window::show_or_create(&self.app);
+            self.daemon.show_window();
         }
 
         fn secondary_activate(&mut self, _x: i32, _y: i32) {
@@ -161,13 +164,13 @@ mod imp {
                 MenuItem::Separator,
                 StandardItem {
                     label: "Показать Volna".into(),
-                    activate: Box::new(|t: &mut Self| window::show_or_create(&t.app)),
+                    activate: Box::new(|t: &mut Self| t.daemon.show_window()),
                     ..Default::default()
                 }
                 .into(),
                 StandardItem {
                     label: "Выход".into(),
-                    activate: Box::new(|t: &mut Self| window::quit(&t.app)),
+                    activate: Box::new(|t: &mut Self| t.daemon.quit()),
                     ..Default::default()
                 }
                 .into(),
@@ -175,33 +178,46 @@ mod imp {
         }
     }
 
-    /// The window icon as ARGB32 (network order), as SNI wants it.
-    fn icon(app: &AppHandle) -> Vec<Icon> {
-        let Some(img) = app.default_window_icon() else {
-            return vec![];
-        };
-        let mut data = img.rgba().to_vec();
+    /// The app icon as ARGB32 (network order), as SNI wants it.
+    fn icons() -> Vec<Icon> {
+        let pngs: [&[u8]; 2] = [
+            include_bytes!("../../../../src-tauri/icons/32x32.png"),
+            include_bytes!("../../../../src-tauri/icons/128x128.png"),
+        ];
+        pngs.iter().filter_map(|b| decode(b)).collect()
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Icon> {
+        let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+        dec.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA);
+        let mut reader = dec.read_info().ok()?;
+        let mut buf = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buf).ok()?;
+        if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+            return None;
+        }
+        let mut data = buf[..info.buffer_size()].to_vec();
         for px in data.as_chunks_mut::<4>().0 {
             px.rotate_right(1);
         }
-        vec![Icon {
-            width: img.width() as i32,
-            height: img.height() as i32,
+        Some(Icon {
+            width: info.width as i32,
+            height: info.height as i32,
             data,
-        }]
+        })
     }
 
-    pub fn start(app: &AppHandle, player: Option<PlayerHandle>) {
+    pub fn start(daemon: Arc<Daemon>, player: Option<PlayerHandle>) {
         let tray = VolnaTray {
-            app: app.clone(),
+            daemon,
             labels: player
                 .as_ref()
                 .map(|p| Labels::of(&p.now()))
                 .unwrap_or_default(),
             player: player.clone(),
-            icon: icon(app),
+            icon: icons(),
         };
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             let handle = match tray.assume_sni_available(true).spawn().await {
                 Ok(h) => h,
                 Err(e) => {
@@ -225,108 +241,35 @@ mod imp {
             }
         });
     }
-}
 
-#[cfg(windows)]
-mod imp {
-    use tauri::AppHandle;
-    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    use volna_player::PlayerHandle;
-
-    use super::{Labels, next, prev, spawn_cmd, toggle};
-    use crate::player::window;
-
-    pub fn start(app: &AppHandle, player: Option<PlayerHandle>) {
-        if let Err(e) = build(app, player) {
-            tracing::warn!("no tray: {e}");
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn icons_decode() {
+            let icons = super::icons();
+            assert_eq!(icons.len(), 2);
+            assert_eq!(icons[0].width, 32);
+            assert_eq!(icons[0].data.len(), 32 * 32 * 4);
         }
-    }
-
-    fn build(app: &AppHandle, player: Option<PlayerHandle>) -> tauri::Result<()> {
-        let labels = player
-            .as_ref()
-            .map(|p| Labels::of(&p.now()))
-            .unwrap_or_default();
-        let now = MenuItem::with_id(app, "now", &labels.now, false, None::<&str>)?;
-        let toggle_item = MenuItem::with_id(
-            app,
-            "toggle",
-            labels.toggle(),
-            labels.has_track,
-            None::<&str>,
-        )?;
-        let next_item =
-            MenuItem::with_id(app, "next", "Следующий", labels.has_track, None::<&str>)?;
-        let prev_item =
-            MenuItem::with_id(app, "prev", "Предыдущий", labels.has_track, None::<&str>)?;
-        let show = MenuItem::with_id(app, "show", "Показать Volna", true, None::<&str>)?;
-        let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-        let sep = PredefinedMenuItem::separator(app)?;
-        let menu = Menu::with_items(
-            app,
-            &[
-                &now,
-                &toggle_item,
-                &next_item,
-                &prev_item,
-                &sep,
-                &show,
-                &quit,
-            ],
-        )?;
-        let menu_player = player.clone();
-        let mut builder = TrayIconBuilder::with_id("volna")
-            .menu(&menu)
-            .show_menu_on_left_click(false)
-            .tooltip(labels.tooltip())
-            .on_menu_event(move |app, ev| match ev.id().as_ref() {
-                "toggle" => spawn_cmd(&menu_player, toggle),
-                "next" => spawn_cmd(&menu_player, next),
-                "prev" => spawn_cmd(&menu_player, prev),
-                "show" => window::show_or_create(app),
-                "quit" => window::quit(app),
-                _ => {}
-            })
-            .on_tray_icon_event(|tray, ev| {
-                if let TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } = ev
-                {
-                    window::show_or_create(tray.app_handle());
-                }
-            });
-        if let Some(icon) = app.default_window_icon() {
-            builder = builder.icon(icon.clone());
-        }
-        let tray = builder.build(app)?;
-        let Some(player) = player else {
-            return Ok(());
-        };
-        tauri::async_runtime::spawn(async move {
-            let mut rx = player.watch_now();
-            let mut last = Labels::of(&rx.borrow());
-            while rx.changed().await.is_ok() {
-                let labels = Labels::of(&rx.borrow_and_update());
-                if labels == last {
-                    continue;
-                }
-                let _ = now.set_text(&labels.now);
-                let _ = toggle_item.set_text(labels.toggle());
-                for item in [&toggle_item, &next_item, &prev_item] {
-                    let _ = item.set_enabled(labels.has_track);
-                }
-                let _ = tray.set_tooltip(Some(labels.tooltip()));
-                last = labels;
-            }
-        });
-        Ok(())
     }
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(target_os = "linux"))]
 mod imp {
-    pub fn start(_: &tauri::AppHandle, _: Option<volna_player::PlayerHandle>) {}
+    pub fn start(_: std::sync::Arc<crate::daemon::Daemon>, _: Option<volna_player::PlayerHandle>) {
+        tracing::info!("no tray on this platform yet; a second launch shows the window");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels() {
+        let l = Labels::of(&NowPlaying::default());
+        assert!(!l.has_track);
+        assert_eq!(l.toggle(), "Играть");
+        assert_eq!(l.tooltip(), "Volna");
+    }
 }

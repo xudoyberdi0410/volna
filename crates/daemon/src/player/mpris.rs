@@ -8,16 +8,15 @@ use mpris_server::{
     LoopStatus, Metadata, PlaybackRate, PlaybackStatus, PlayerInterface, Property, RootInterface,
     Server, Signal, Time, TrackId, Volume,
 };
-use tauri::AppHandle;
 use tokio::sync::broadcast::error::RecvError;
 use volna_player::{NowPlaying, PlayerEvent, PlayerHandle, PlayerTrack, Repeat, Status};
 
 use super::convert::cover_source;
-use super::window;
+use crate::daemon::Daemon;
 use crate::state::Images;
 
 struct Mpris {
-    app: AppHandle,
+    daemon: Arc<Daemon>,
     player: PlayerHandle,
     /// `(uid, file:// URL)` of the cover once it is on disk.
     art: std::sync::Mutex<Option<(String, String)>>,
@@ -85,11 +84,11 @@ fn metadata(t: Option<&PlayerTrack>, duration: Option<f64>, art: Option<&str>) -
 
 impl RootInterface for Mpris {
     async fn raise(&self) -> fdo::Result<()> {
-        window::show_or_create(&self.app);
+        self.daemon.show_window();
         Ok(())
     }
     async fn quit(&self) -> fdo::Result<()> {
-        window::quit(&self.app);
+        self.daemon.quit();
         Ok(())
     }
     async fn can_quit(&self) -> fdo::Result<bool> {
@@ -280,11 +279,10 @@ struct Shown {
     prev: Option<bool>,
 }
 
-pub fn start(app: &AppHandle, player: PlayerHandle, images: Arc<Images>) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+pub fn start(daemon: Arc<Daemon>, player: PlayerHandle, images: Arc<Images>) {
+    tokio::spawn(async move {
         let imp = || Mpris {
-            app: app.clone(),
+            daemon: daemon.clone(),
             player: player.clone(),
             art: std::sync::Mutex::new(None),
         };

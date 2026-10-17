@@ -1,20 +1,19 @@
-//! The native player inside the app (`docs/native-player.md` §4.5): the
-//! `volna_player` engine with the app's hooks, the §3.3 commands, events
-//! to the window while it exists, the window lifecycle, the tray and MPRIS.
+//! The native player inside the daemon (`docs/native-player.md` §4.5, §9):
+//! the `volna_player` engine with the app's hooks, the §3.3 commands, events
+//! to the window process while one is connected, the tray and MPRIS.
 
 pub mod commands;
-mod convert;
-mod forward;
-mod hooks;
-mod journal;
+pub mod convert;
+pub mod forward;
+pub mod hooks;
+pub mod journal;
 #[cfg(target_os = "linux")]
-mod mpris;
-mod tray;
-pub mod window;
+pub mod mpris;
+pub mod tray;
 
+use std::path::Path;
 use std::sync::Arc;
 
-use tauri::Manager;
 use volna_player::{Player, PlayerHandle};
 
 use crate::state::AppState;
@@ -25,7 +24,6 @@ pub struct PlayerState {
     /// `None` when GStreamer could not start; commands answer `unavailable:`.
     handle: Option<PlayerHandle>,
     pub journal: Arc<Journal>,
-    pub close: window::CloseGate,
 }
 
 impl PlayerState {
@@ -34,13 +32,15 @@ impl PlayerState {
             .as_ref()
             .ok_or_else(|| "unavailable: the audio engine (GStreamer) did not start".to_owned())
     }
+
+    pub fn handle_opt(&self) -> Option<&PlayerHandle> {
+        self.handle.as_ref()
+    }
 }
 
-/// Starts the engine (restoring the queue paused), the event forwarder, the
-/// tray and MPRIS. Call in `setup` after the audio server is bound.
-pub fn setup(app: &tauri::App, state: &AppState, wave: &WaveState) -> anyhow::Result<PlayerState> {
-    let data = app.path().app_data_dir()?;
-    let config = app.path().app_config_dir()?;
+/// Starts the engine (restoring the queue paused). Call inside the tokio
+/// runtime, after the audio server is bound.
+pub fn setup(data: &Path, config: &Path, state: &AppState, wave: &WaveState) -> PlayerState {
     let journal = Arc::new(Journal::open(&data.join("player-journal.jsonl")));
     let handle = match volna_player::init_gstreamer() {
         Ok(()) => {
@@ -55,7 +55,6 @@ pub fn setup(app: &tauri::App, state: &AppState, wave: &WaveState) -> anyhow::Re
                 queue: data.join("player-queue.json"),
                 settings: config.join("player.json"),
             };
-            let _rt = tauri::async_runtime::handle().inner().enter();
             Some(Player::spawn(hooks, paths))
         }
         Err(e) => {
@@ -63,15 +62,5 @@ pub fn setup(app: &tauri::App, state: &AppState, wave: &WaveState) -> anyhow::Re
             None
         }
     };
-    forward::start(app.handle(), handle.clone(), &journal);
-    tray::start(app.handle(), handle.clone());
-    #[cfg(target_os = "linux")]
-    if let Some(h) = &handle {
-        mpris::start(app.handle(), h.clone(), state.images.clone());
-    }
-    Ok(PlayerState {
-        handle,
-        journal,
-        close: window::CloseGate::default(),
-    })
+    PlayerState { handle, journal }
 }

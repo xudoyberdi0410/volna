@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::State;
 use tokio::sync::OnceCell;
 use volna_wave::{
     ArtistBrief, PlayerEvent, RecordOutcome, SeedArtist, Store, Wave, WaveSettings, WaveStatus,
@@ -311,22 +310,16 @@ fn now_s() -> i64 {
         .unwrap_or(0)
 }
 
-#[tauri::command]
-pub async fn wave_status(wave: State<'_, WaveState>) -> CmdResult<WaveStatus> {
+pub async fn wave_status(wave: &WaveState) -> CmdResult<WaveStatus> {
     wave.wave.status().await.map_err(err)
 }
 
-#[tauri::command]
-pub async fn wave_set_settings(
-    wave: State<'_, WaveState>,
-    settings: WaveSettings,
-) -> CmdResult<WaveStatus> {
+pub async fn wave_set_settings(wave: &WaveState, settings: WaveSettings) -> CmdResult<WaveStatus> {
     wave.wave.set_settings(settings).await.map_err(err)?;
     wave.wave.status().await.map_err(err)
 }
 
-#[tauri::command]
-pub async fn wave_activities(wave: State<'_, WaveState>) -> CmdResult<ActivityList> {
+pub async fn wave_activities(wave: &WaveState) -> CmdResult<ActivityList> {
     let categories = wave.ytm().moods_and_genres().await.map_err(err)?;
     let mut list = ActivityList {
         activities: vec![],
@@ -355,11 +348,7 @@ pub async fn wave_activities(wave: State<'_, WaveState>) -> CmdResult<ActivityLi
 
 /// Artist search for the cold-start screen; an empty query gives the
 /// default grid.
-#[tauri::command]
-pub async fn wave_artist_search(
-    wave: State<'_, WaveState>,
-    query: String,
-) -> CmdResult<Vec<ArtistCard>> {
+pub async fn wave_artist_search(wave: &WaveState, query: String) -> CmdResult<Vec<ArtistCard>> {
     let query = query.trim();
     if query.is_empty() {
         let ytm = wave.ytm().clone();
@@ -412,40 +401,29 @@ fn dedup_cards(mut cards: Vec<ArtistCard>) -> Vec<ArtistCard> {
 }
 
 /// "Fans might also like" of a picked artist, to grow the grid.
-#[tauri::command]
-pub async fn wave_related_artists(
-    wave: State<'_, WaveState>,
-    id: String,
-) -> CmdResult<Vec<ArtistCard>> {
+pub async fn wave_related_artists(wave: &WaveState, id: String) -> CmdResult<Vec<ArtistCard>> {
     let artist = wave.ytm().artist(&id).await.map_err(err)?;
     Ok(artist_cards(artist.related.into_iter().map(Item::Artist)))
 }
 
-#[tauri::command]
-pub async fn wave_cold_start(
-    wave: State<'_, WaveState>,
-    artists: Vec<SeedArtist>,
-) -> CmdResult<WaveStatus> {
+pub async fn wave_cold_start(wave: &WaveState, artists: Vec<SeedArtist>) -> CmdResult<WaveStatus> {
     wave.wave.add_seed_artists(&artists).map_err(err)?;
     wave.wave.status().await.map_err(err)
 }
 
-#[tauri::command]
-pub async fn wave_start(wave: State<'_, WaveState>, count: Option<usize>) -> CmdResult<Vec<Value>> {
+pub async fn wave_start(wave: &WaveState, count: Option<usize>) -> CmdResult<Vec<Value>> {
     let tracks = wave.wave.start(count.unwrap_or(5)).await.map_err(err)?;
     Ok(shaped(&tracks))
 }
 
-#[tauri::command]
-pub async fn wave_next(wave: State<'_, WaveState>, count: Option<usize>) -> CmdResult<Vec<Value>> {
+pub async fn wave_next(wave: &WaveState, count: Option<usize>) -> CmdResult<Vec<Value>> {
     let tracks = wave.wave.next(count.unwrap_or(5)).await.map_err(err)?;
     Ok(shaped(&tracks))
 }
 
 /// After a re-seed: the queued `dropped` tracks are stale, give fresh ones.
-#[tauri::command]
 pub async fn wave_requeue(
-    wave: State<'_, WaveState>,
+    wave: &WaveState,
     dropped: Vec<String>,
     count: Option<usize>,
 ) -> CmdResult<Vec<Value>> {
@@ -457,14 +435,12 @@ pub async fn wave_requeue(
     Ok(shaped(&tracks))
 }
 
-#[tauri::command]
-pub async fn wave_stop(wave: State<'_, WaveState>) -> CmdResult<()> {
+pub async fn wave_stop(wave: &WaveState) -> CmdResult<()> {
     wave.wave.stop().await;
     Ok(())
 }
 
-#[tauri::command]
-pub async fn wave_event(wave: State<'_, WaveState>, event: UiEvent) -> CmdResult<RecordOutcome> {
+pub async fn wave_event(wave: &WaveState, event: UiEvent) -> CmdResult<RecordOutcome> {
     let event = PlayerEvent::from(event);
     let id = match &event {
         PlayerEvent::Start { track, .. }
@@ -481,8 +457,7 @@ pub async fn wave_event(wave: State<'_, WaveState>, event: UiEvent) -> CmdResult
 }
 
 /// Mirrors the UI's liked tracks (IndexedDB favourites) into the wave.
-#[tauri::command]
-pub async fn wave_sync_likes(wave: State<'_, WaveState>, tracks: Vec<UiLike>) -> CmdResult<usize> {
+pub async fn wave_sync_likes(wave: &WaveState, tracks: Vec<UiLike>) -> CmdResult<usize> {
     let now = now_s();
     let liked: Vec<(Track, i64)> = tracks
         .into_iter()

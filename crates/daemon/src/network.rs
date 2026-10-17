@@ -9,7 +9,6 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::State;
 use volna_net::{HealthReport, NetStatus, ProxyConfig};
 use volna_streams::Cookies;
 
@@ -106,7 +105,7 @@ impl NetworkState {
 }
 
 /// Hot-swaps the network and everything that depends on the exit IP.
-pub(crate) async fn switch(app: &AppState, config: ProxyConfig) -> CmdResult<()> {
+pub async fn switch(app: &AppState, config: ProxyConfig) -> CmdResult<()> {
     config.validate().map_err(|e| e.to_string())?;
     app.net.apply(config).await.map_err(|e| e.to_string())?;
     app.api.refresh_http_client().await;
@@ -126,8 +125,7 @@ pub struct NetSettingsView {
     cookies: Cookies,
 }
 
-#[tauri::command]
-pub fn net_settings(app: State<'_, AppState>, net: State<'_, NetworkState>) -> NetSettingsView {
+pub fn net_settings(app: &AppState, net: &NetworkState) -> NetSettingsView {
     NetSettingsView {
         config: app.net.config(),
         status: app.net.status(),
@@ -142,33 +140,29 @@ pub fn net_settings(app: State<'_, AppState>, net: State<'_, NetworkState>) -> N
 
 /// `cookies` is `{"mode":"none"}`, `{"mode":"browser","value":"firefox"}`
 /// or `{"mode":"file","value":"/path/cookies.txt"}`.
-#[tauri::command]
 pub async fn net_set_cookies(
-    app: State<'_, AppState>,
-    net: State<'_, NetworkState>,
+    app: &AppState,
+    net: &NetworkState,
     cookies: Cookies,
 ) -> CmdResult<()> {
-    net.set_cookies(&app, cookies).await
+    net.set_cookies(app, cookies).await
 }
 
 /// `config` is `{"mode":"direct"}` or `{"mode":"url"|"vless","value":"..."}`.
-#[tauri::command]
 pub async fn net_apply(
-    app: State<'_, AppState>,
-    net: State<'_, NetworkState>,
+    app: &AppState,
+    net: &NetworkState,
     config: ProxyConfig,
 ) -> CmdResult<NetStatus> {
-    net.apply(&app, config).await
+    net.apply(app, config).await
 }
 
 /// Checks the link without applying it (no network, no xray).
-#[tauri::command]
 pub fn net_validate(config: ProxyConfig) -> CmdResult<()> {
     config.validate().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn net_health(app: State<'_, AppState>) -> CmdResult<HealthReport> {
+pub async fn net_health(app: &AppState) -> CmdResult<HealthReport> {
     Ok(app.net.health_check().await)
 }
 
@@ -188,8 +182,7 @@ pub struct AudioCheck {
 
 /// Can audio be resolved through the current network? The catalogue may
 /// work while yt-dlp is refused with a bot check, so «Проверить» asks both.
-#[tauri::command]
-pub async fn net_audio_check(app: State<'_, AppState>) -> CmdResult<AudioCheck> {
+pub async fn net_audio_check(app: &AppState) -> CmdResult<AudioCheck> {
     let Some(streams) = &app.streams else {
         return Ok(AudioCheck {
             ok: false,
@@ -218,8 +211,7 @@ pub async fn net_audio_check(app: State<'_, AppState>) -> CmdResult<AudioCheck> 
     })
 }
 
-#[tauri::command]
-pub fn net_xray_logs(app: State<'_, AppState>) -> Vec<String> {
+pub fn net_xray_logs(app: &AppState) -> Vec<String> {
     app.net.xray_logs()
 }
 

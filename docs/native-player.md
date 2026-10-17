@@ -843,3 +843,160 @@ volna (crates/daemon, bin "volna")                 volna-window (src-tauri, bin 
   zombies. With the window open the window process is ~170 MB on its own.
 - **Not done:** no tray on Windows (the daemon has no GUI toolkit there; a second launch shows
   the window), SMTC.
+
+## 10. Events and snapshots for the UI (IPC, as implemented)
+
+What the daemon actually sends today, read from the code (2026-10-17). §3.2–§3.6 are the design;
+where they differ, this section follows the code.
+
+### 10.1 Transport
+
+- Daemon → window: an IPC frame whose JSON header is `{"t":"event","name":…,"payload":…}`
+  (`Msg::Event`, `#[serde(tag = "t", rename_all = "snake_case")]` in `crates/daemon/src/ipc.rs`).
+  The window re-emits it unchanged with `app.emit_to("main", name, payload)`
+  (`src-tauri/src/shell.rs`, `on_push`).
+- The only `Msg::Event` producer is `Sink::emit` in `crates/daemon/src/daemon.rs`, fed only by
+  `crates/daemon/src/player/forward.rs`. `wave.rs`, `network.rs` and the rest of the daemon emit
+  no events.
+- Nothing is sent while no window is connected (`sink.connected()`): player events are dropped,
+  not queued; plays survive in the journal (§10.4). A lagged broadcast receiver skips events
+  (`RecvError::Lagged`); the UI resyncs on a `rev` gap (§3.6).
+- Window-local events, not from the daemon: `app:will-close` `{}` (`src-tauri/src/shell.rs`) and
+  `yandex-progress` `{stage: string, detail: string | null}` (`src-tauri/src/yandex.rs`).
+
+### 10.2 Event list (`event_payload` in `crates/daemon/src/player/forward.rs`)
+
+Types are in `crates/player/src/model.rs`; emit sites in `crates/player/src/engine.rs`.
+
+| Event | Source | When | Payload |
+|---|---|---|---|
+| `player:state` | `PlayerEvent::State` | `publish_state`: only when the state differs from the last published one, ignoring `position` and `at` | `PlaybackState` |
+| `player:position` | `PlayerEvent::Position` | every 250 ms tick (`TICK`) while a deck is active, prerolled and status is `playing` or `loading`; also right after seeks, play start and other transitions (`emit_position` call sites) | `PositionEvent` |
+| `player:queue` | `PlayerEvent::Queue` | every queue commit (`commit()`), from UI commands or Rust top-ups | `QueueChanged` |
+| `player:error` | `PlayerEvent::Error` | every track failure; if it is the current uid, `state.error` is set and a `player:state` precedes it | `PlayerError` |
+| `player:settings` | `PlayerEvent::Settings{external: true}` | settings changed via MPRIS (`crates/daemon/src/player/mpris.rs`, `set_settings(…, true)`) | `{settings: PlayerSettings, dsp: DspConfig}` |
+| `player:sleep` | `PlayerEvent::Sleep` | `player_set_sleep_timer` (set or cleared), and `endsAt: null` when the timer's fade finishes and playback pauses | `{endsAt: number \| null}` (Unix ms) |
+| `player:wave` | `PlayerEvent::Wave` | `true` on wave start; `false` when the continuation switches away from `wave` | `{active: boolean}` |
+| `player:queue-low` | `PlayerEvent::QueueLow` | continuation kind `ui`, at track start, fewer than `TOP_UP_AT` entries after the current one | `{remaining: number}` |
+| `player:journal` | journal listener (`forward::start`) | every `Journal::append` while a window is connected | `JournalEntry` |
+
+Not forwarded (`event_payload` returns `None`): `PlayerEvent::Seeked` (used for the MPRIS
+`Seeked` signal only) and `PlayerEvent::Settings{external: false}`, i.e. changes made by
+`player_set_settings` and `player_set_dsp`, whose callers already have the result.
+
+### 10.3 Payload shapes (serde output)
+
+```ts
+type Status = "idle" | "loading" | "playing" | "paused" | "ended";
+type ErrorKind = "bot_check" | "unavailable" | "no_yt_dlp" | "decode" | "timeout" | "other";
+type ErrorAction = "skipped" | "stopped" | "retrying" | "none";
+
+interface PlaybackState {
+  status: Status; uid: string | null; trackId: string | null;
+  position: number;           // s
+  at: number;                 // Unix ms of the position sample
+  duration: number | null; rate: number; buffering: boolean; crossfading: boolean;
+  volume: number; muted: boolean;
+  stream: { codec: string | null; bitrateKbps: number | null;
+            quality: "HIGH" | "LOW"; mime: string | null } | null;
+  error: PlayerError | null;
+}
+interface PositionEvent { uid: string | null; position: number; duration: number | null;
+                          rate: number; at: number; playing: boolean }  // playing: status == "playing"
+interface PlayerError { uid: string | null; trackId: string | null; kind: ErrorKind;
+                        message: string; action: ErrorAction; streak: number }
+
+interface PlayerTrack {
+  uid: string; id: string; title: string;
+  artists: { id: string | null; name: string }[];
+  album: { id: string | null; title: string } | null;
+  duration: number | null; cover: string | null; explicit: boolean;
+  kind: "track" | "video"; origin: "user" | "wave" | "radio" | "autoplay";
+  raw: unknown | null;        // always present, null when absent
+  ui: unknown | null;         // opaque, returned verbatim
+  unavailable: boolean;
+}
+interface Continuation { kind: "none" | "wave" | "radio" | "ui"; fetching: boolean }
+interface QueueChanged {
+  rev: number; order: string[];          // uids
+  original: string[] | null;
+  index: number;                         // -1 = no current entry (queue.rs index_i64)
+  shuffle: boolean; repeat: "off" | "all" | "one"; continuation: Continuation;
+  added: PlayerTrack[]; updated: PlayerTrack[];
+}
+type JournalEntry =                      // internally tagged on "kind", fields camelCase
+  | { kind: "history"; seq: number; at: number; track: PlayerTrack }
+  | { kind: "end"; seq: number; at: number; track: PlayerTrack; startedAt: number;
+      position: number; duration: number | null; ended: boolean; inWave: boolean };
+```
+
+`PlayerSettings` and `DspConfig` serialize exactly as in the §3.7 snapshot fixture (round-trip
+tested in `model.rs`, `snapshot_fixture_round_trips`). `Crossfade`, `Continuation`,
+`CrossfeedConfig`, `WideningConfig` and `BinauralConfig` have no `rename_all`, but their fields
+are single words, so the keys match. `EqBand.kind` serializes as `"type"`. `stream.quality` is
+uppercase (`"HIGH"`/`"LOW"`) while `settings.quality` is lowercase. No field in these types uses
+`skip_serializing_if` (only `TrackInput.raw`, an input type), so optional fields come as `null`.
+
+`history` is appended once a play reaches 10 s; `end` when a started play closes (`ended`:
+played to the end; `inWave`: the track belonged to the wave). Both come from `PlayTracker` via
+`Hooks::on_play_event` (`crates/daemon/src/player/hooks.rs`).
+
+### 10.4 `player_snapshot` and the journal
+
+- `player_snapshot` (no args) → `PlayerSnapshot`:
+  `{protocol: 1, state: PlaybackState, queue: QueueSnapshot, settings: PlayerSettings,
+  dsp: DspConfig, sleepTimer: {endsAt: number} | null, wave: {active: boolean}, journalSeq: number}`,
+  where `QueueSnapshot = {rev, items: PlayerTrack[], original, index, shuffle, repeat, continuation}`
+  (full items instead of `order`/`added`/`updated`). `journalSeq` is `Journal::seq()`, the
+  highest seq ever written.
+- `player_journal({after?: number})` → `JournalEntry[]` with `seq > after` (default 0),
+  ascending, at most 1000 per call (`PAGE`); loop until empty.
+- `player_journal_ack({upTo: number})` → `null`; forgets entries with `seq <= upTo`.
+- Seq (`crates/daemon/src/player/journal.rs`): +1 per append, never reused; it survives acks and
+  restarts (a rewritten file starts with `{"meta":{"seq":N}}`). The file is JSONL at
+  `<app_data_dir>/player-journal.jsonl`, capped at 5000 entries (oldest dropped). Live
+  `player:journal` entries and `player_journal` pages can overlap, so dedupe by `seq`.
+- `Record` (`History`/`End`) is only the daemon-internal argument of `Journal::append` (no
+  serde); on the wire it is the `JournalEntry` with `seq` filled in.
+- `player_journal` and `player_journal_ack` work even when the engine failed to start; every
+  other `player_*` command then fails with `"unavailable: the audio engine (GStreamer) did not start"`.
+
+### 10.5 `player_*` commands (`crates/daemon/src/player/commands.rs`)
+
+Args use the JS camelCase keys; `?` means optional (missing or `null`), defaults in parentheses.
+Errors are strings `"<code>: <message>"`; bad args give ``"invalid args `key`: …"``.
+"rev" means `{rev: number}`.
+
+| Command | Args | Returns |
+|---|---|---|
+| `player_snapshot` | — | `PlayerSnapshot` |
+| `player_journal` | `after?: number` | `JournalEntry[]` |
+| `player_journal_ack` | `upTo: number` | `null` |
+| `player_play`, `player_pause`, `player_toggle`, `player_stop`, `player_next`, `player_prev` | — | `null` |
+| `player_seek` | `position: number`, `resume?: boolean` (false) | `null` |
+| `player_play_uid` | `uid: string`, `position?: number` | `null` |
+| `player_set_queue` | `tracks: TrackInput[]`, `startIndex?: number` (0; negative → 0), `play?: boolean` (false), `position?: number` | rev |
+| `player_enqueue` | `tracks: TrackInput[]`, `at: "next" \| "end"` | rev |
+| `player_remove` | `uid: string` | rev |
+| `player_move` | `uid: string`, `to: number` (negative → `bad_args`) | rev |
+| `player_clear` | `keepCurrent: boolean` | rev |
+| `player_set_shuffle` | `on: boolean` | rev |
+| `player_set_repeat` | `mode: "off" \| "all" \| "one"` | rev |
+| `player_set_settings` | `patch: object` (one-level merge; unknown key → error) | `PlayerSettings` |
+| `player_set_dsp` | `config: DspConfig` | `null` |
+| `player_set_sleep_timer` | `minutes?: number` (missing or ≤ 0 clears) | `{endsAt: number \| null}` |
+| `player_set_continuation` | `kind: "none" \| "wave" \| "radio" \| "ui"`, `seeds?: TrackInput[]` ([]) | `null` |
+| `player_wave_start` | `count?: number` (5) | rev |
+| `player_wave_stop`, `player_wave_dislike` | — | `null` |
+| `player_wave_requeue` | — | rev |
+| `player_visualizer_start` | `fps?: number` (60) | `null` |
+| `player_visualizer_stop` | — | `null` |
+
+`TrackInput` is the §3.2 type (`model.rs`; every field defaults, `raw` is not sent by the UI).
+
+### 10.6 Visualizer frames
+
+For `player_visualizer_start`, `dispatch.rs` builds a frame sink that calls `Daemon::send_vis`:
+each frame is an IPC frame with header `{"t":"vis"}` and the raw frame bytes as the body (layout
+§3.5). The window passes the body to the page's Channel as `InvokeResponseBody::Raw`
+(`src-tauri/src/shell.rs`). With no window connected `send_vis` returns `false`.

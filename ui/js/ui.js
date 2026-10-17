@@ -3310,37 +3310,15 @@ export class UIRenderer {
         }
 
         if (isHls) {
-            const Hls = (await import('hls.js')).default;
-            if (Hls.isSupported()) {
-                const hls = new Hls();
-                video._hls = hls;
-                hls.loadSource(url);
-                hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    if (!video.autoplay) return;
-                    video.play().catch((e) => {
-                        console.warn('Autoplay failed, muted play might be required:', e);
-                        video.muted = true;
-                        video.play().catch(() => {});
-                    });
-                });
-                hls.on(Hls.Events.ERROR, (_event, data) => {
-                    if (data.fatal) {
-                        console.warn('HLS fatal error:', data.type);
-                        if (fallbackImg) video.replaceWith(fallbackImg);
-                        hls.destroy();
-                        if (video._hls === hls) video._hls = null;
-                    }
-                });
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                // safari supports HLS natively
+            // Only native HLS: hls.js is not bundled (YouTube has no HLS video covers).
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 try {
                     video.src = url;
                 } catch {
                     if (fallbackImg) video.replaceWith(fallbackImg);
                 }
-            } else {
-                if (fallbackImg) video.replaceWith(fallbackImg);
+            } else if (fallbackImg) {
+                video.replaceWith(fallbackImg);
             }
         } else {
             // MP4

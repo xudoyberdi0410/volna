@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../api/catalog.dart';
+import '../api/player.dart';
 import '../ipc/transport.dart';
 
 /// The daemon transport; overridden in `main` with the platform one.
@@ -12,3 +14,7 @@ final connectionStatusProvider = StreamProvider<TransportStatus>((ref) async* {
   yield t.status;
   yield* t.statusChanges;
 });
+
+final catalogProvider = Provider((ref) => CatalogApi(ref.watch(transportProvider)));
+
+final playerProvider = Provider((ref) => PlayerApi(ref.watch(transportProvider)));

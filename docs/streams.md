@@ -85,6 +85,8 @@ Commands:
 cache, Range handling, `StreamService` and `LoopbackServer` do not know which backend runs.
 
 - Feature `ytdlp` (default): `YtDlp`, the sidecar described above.
+- Feature `innertube`: `InnerTube`, our own resolver for mobile (see "InnerTube backend"
+  below). No binary, no Python; JavaScript runs in a host-provided `JsRuntime`.
 - `RustyPipeBackend` in `crates/streams-rustypipe`: in-process InnerTube player requests
   through [RustyPipe](https://codeberg.org/ThetaDev/rustypipe), no binary and no PO token.
   It uses the Codeberg branch `feat/deobf-extractor` (pinned rev in its `Cargo.toml`),
@@ -192,6 +194,153 @@ logged-in web client path that works for yt-dlp: cookies or OAuth, a PO token fr
 in the platform WebView (as the plan says), and a JS challenge solver (the WebView's JS engine
 can run the player's `n`/signature code). That is a resolver of our own, not RustyPipe.
 
+## InnerTube backend (feature `innertube`)
+
+`volna_streams::innertube::InnerTube` resolves the way yt-dlp's `web_music` client does
+(yt-dlp 2026.08.19 is the reference), with no yt-dlp and no Python. All HTTP is Rust, on
+the exit the stream is fetched from (the `proxy` the `Backend` gets). Only JavaScript runs
+elsewhere, through `JsRuntime`.
+
+1. `GET https://music.youtube.com/` with the session's cookies; every `ytcfg.set({...})` is
+   merged. It gives `INNERTUBE_CONTEXT` (pinned to `hl=en`, UTC), client version, visitor
+   data, `DATASYNC_ID`, `SESSION_INDEX`, `LOGGED_IN`, the player URL and the
+   `html5_generate_content_po_token` experiment. Cached per exit for an hour. Without a
+   page it falls back to the built-in `WEB_REMIX` context and `iframe_api` for the player.
+2. `base.js` of that player, always the `main` variant
+   (`/s/player/<id>/player_ias.vflset/en_US/base.js`, as yt-dlp forces), kept in memory
+   (two versions) and in `InnerTubeOptions::cache_dir`. `signatureTimestamp` comes from the
+   page's `STS` or the player.
+3. `POST music.youtube.com/youtubei/v1/player` with `X-YouTube-Client-Name: 67`, version,
+   `X-Goog-Visitor-Id`, `Cookie`, `Authorization: SAPISIDHASH … SAPISID1PHASH …
+   SAPISID3PHASH …` (with `_u` when the user session id is known), `X-Goog-AuthUser`,
+   `X-Origin`. A 400/403/429 refreshes the ytcfg and retries twice (0.5 s, 3 s); then it is
+   reported as `BotCheck` ("this exit is rate limited").
+4. Format choice: audio-only, no DRC, default audio track; `PreferOpus` takes the
+   best/worst Opus (251/250/249) or falls back to AAC; `AacOnly` takes 140/139. Formats
+   without a URL or cipher are SABR-only and give `NoAudioStream`.
+5. `s` (from `signatureCipher`, written back under `sp`) and `n` are solved by the runtime.
+   As in yt-dlp, a signature is solved once per length (the challenge is the chars
+   `0..len`, the answer is a permutation); `n` answers are cached per challenge.
+6. GVS PO token: bound to the video id under the content-binding experiment (on now), else
+   to `DATASYNC_ID` when logged in, else to the visitor data, as yt-dlp's
+   `get_webpo_content_binding`. BotGuard as in BgUtils: Rust posts `[requestKey]` to
+   `www.youtube.com/api/jnn/v1/Create` (descrambling the base64 answer, bytes + 97), the
+   runtime runs the VM and takes a snapshot, Rust trades it at `GenerateIT` for an
+   integrity token (TTL 12 h here), the runtime mints `pot` with it. One attestation per exit,
+   refreshed 10 min before expiry or when the runtime has lost the session. If minting fails
+   the URL is returned without `pot` (logged), like yt-dlp.
+
+`ResolvedStream::user_agent` is the Chrome UA the requests used; googlevideo is fetched with
+it. Pre-roll ads (`adPlacements`) are counted; `InnerTubeOptions::wait_for_ads` would sleep
+them out as yt-dlp's downloader does, off by default (no 403 seen without waiting).
+
+### JsRuntime contract
+
+The trait is `volna_streams::js::JsRuntime` (built without any feature);
+`volna_core::js` re-exports it, and its `CallbackJs` (the `volna_core_set_js_callback` /
+`volna_core_js_result` pair, see `docs/mobile-build.md`) implements it. One request is one
+`evaluateJavaScript` round trip:
+
+```rust
+pub trait JsRuntime: Send + Sync {
+    /// request: a JsRequest as JSON. Evaluate `volnaJs(request)` (PRELUDE loaded) and
+    /// return the string the promise resolves to. Err only for transport failures.
+    fn call(&self, request: String) -> Pin<Box<dyn Future<Output = Result<String, JsError>> + Send + '_>>;
+}
+```
+
+The host loads `volna_streams::js::PRELUDE` (over FFI: `volna_core_js_prelude()`) once per
+JS context (yt-dlp's EJS solver plus `js/volna.js`; it defines `globalThis.volnaJs`), then
+for each request
+evaluates `volnaJs(<request JSON>)` and hands back the resolved string unchanged.
+`JsRequest::to_script()` builds that expression. `volnaJs` never rejects and makes no
+network requests. The context must persist between calls (it keeps the preprocessed player
+and the BotGuard VM); if it is lost, the scripts answer `need_player` / `unknown_session`
+and Rust resends the player or attests again by itself. BotGuard fingerprints the DOM, so
+the context needs a real document: a WebView page (Android `WebView`, `WKWebView`) is fine;
+Deno uses jsdom.
+
+- WKWebView: `callAsyncJavaScript("return await volnaJs(r)", arguments: ["r": json])`.
+- Android: `evaluateJavascript` does not await promises; evaluate
+  `volnaJs(<json>).then(s => VolnaBridge.reply(<id>, s))` with a `@JavascriptInterface`.
+
+Every answer is a JSON string: `{"ok": <result>}` or
+`{"error": {"code": "...", "message": "..."}}`. Codes: `need_player`, `unknown_session`,
+`solver`, `botguard`, `no_solver`, `bad_request`, `js_error`; Rust adds `runtime`
+(transport) and `bad_response`.
+
+| Request | `ok` result |
+|---|---|
+| `{"op":"solve","player_id":"0229cd64","player":"<base.js, only when needed>","n":["dl0R5lucCIx30g"],"sig":["\u0000\u0001…"]}` | `{"n":{"dl0R5lucCIx30g":"jhWOwsSWQ6pa"},"sig":{"\u0000\u0001…":"*fedcba…"}}` |
+| `{"op":"botguard_snapshot","session":"bg1","interpreter_js":"…","program":"…","global_name":"trayride"}` | `{"botguard_response":"$20Q5RCBR…"}` |
+| `{"op":"botguard_mint","session":"bg1","integrity_token":"<base64>","content_bindings":["dQw4w9WgXcQ"]}` | `{"po_tokens":["MlqWVZKJ…"]}` (base64url) |
+| `{"op":"version"}` | `{"version":1}` |
+
+`player` is sent only the first time per player id (or after `need_player`): it is 3 MB,
+and the preprocessed player the solver derives from it is 4 MB, so the runtime keeps it
+instead of round-tripping it. A first solve takes ~0.6 s in Deno, later ones ~30 ms.
+
+`JsCallback(|request| async { … })` turns a closure into a runtime.
+`DenoRuntime` (feature `innertube-deno`, dev and tests only) runs `js/deno_host.js` in one
+long-lived `deno run` (found as `$VOLNA_DENO`, the `volna-deno` sidecar, or `deno` on
+`PATH`), JSON lines over stdio, `--allow-env` only; jsdom (`npm:jsdom@26.1.0`) is
+fetched by Deno into `DENO_DIR` on first use.
+
+### Vendored JavaScript and licenses
+
+`crates/streams/js/`:
+
+| File | Source | License |
+|---|---|---|
+| `ejs/yt.solver.lib.min.js`, `ejs/yt.solver.core.min.js` | yt-dlp-ejs 0.8.0 (`yt_dlp_ejs/yt/solver/`), byte-identical | Unlicense (`ejs/LICENSE`); the lib bundles meriyah 6.1.4 (ISC) and astring 1.9.0 (MIT), notices in its header |
+| `volna.js` | ours; the BotGuard part follows BgUtils 4.0.3 by LuanRT | Apache-2.0 and MIT (`LICENSE-bgutils`) |
+| `deno_host.js` | ours | Apache-2.0 |
+
+Nothing from bgutil-ytdlp-pot-provider is used: it is GPL-3.0 (both the TypeScript
+server and the Rust `bgutil-pot` installed here). jsdom (MIT) is only loaded by the Deno
+host at run time, never shipped.
+
+### Live results (2026-10-17)
+
+`innertube_live` through `socks5h://127.0.0.1:1081` (exit 46.62.225.48, the datacenter VPS;
+googlevideo URLs carry the exit's IPv6 `2a01:4f9:c010:b658::1`), Chrome cookies exported with
+yt-dlp, the RustyPipe spike's ten tracks, each in Opus and AAC. A cell counts when
+googlevideo answers 206 with 64 KiB both at byte 0 and at the middle of the file (past the
+first MiBs that are served without a PO token).
+
+| Pass | Played | Notes |
+|---|---|---|
+| Cookies + PO token | 20/20 | 251 (124–137 kbps) and 140 (130 kbps) for every track. Resolve ~0.4–0.5 s warm; ~3 s for the first track (ytcfg, 3 MB player, Deno start, attestation). About one player request in three got Google's "Sorry..." 403 page and needed the retry (+8–11 s). |
+| No cookies + PO token | 2/20 | "Sign in to confirm you're not a bot" for the rest, the same as yt-dlp and RustyPipe from this exit. |
+| Cookies, no PO token | 18/20 | Also served past the middle: this account gets streams without `pot` (yt-dlp skips the GVS token for Premium accounts; the account is likely Premium). The 2 misses were rate-limit 403s. |
+
+`innertube_live_plays_through_loopback` (NetManager → `StreamService<InnerTube>` →
+`LoopbackServer`, start + seek to the middle): 19/20, WebM starts with the EBML magic, MP4
+with `ftyp`. The one miss (Queen, Opus) was the rate-limit 403 after both retries.
+
+BotGuard attestation usually takes 0.5–1.6 s (`Create` ~0.4 s, snapshot 30 ms–1.1 s, `GenerateIT`).
+Twice the first snapshot of a test process took 43 s and 77 s; the same snapshot sent to the
+host by hand takes 0.03 s, and other agents' builds were running at the time, so CPU
+starvation of the VM is the likely cause (not proven).
+
+### Verdict for mobile
+
+Viable with a logged-in session: the whole yt-dlp path (web_music, n/sig, BotGuard PO token)
+works in-process with all JavaScript behind a WebView-shaped `JsRuntime`, and plays both
+Opus and AAC. Unverified, and what decides it:
+
+- The WebView itself: only Deno+jsdom ran here. BotGuard should accept a real WebView more
+  readily than jsdom, but Android WebView / WKWebView were not tried.
+- Anonymous use from a datacenter IP fails (bot check). A phone on a residential/mobile IP
+  in a YTM country has not been measured; plan for a Google sign-in (cookies from a login
+  WebView, `InnerTube::set_cookies`).
+- The PO token path was not proven necessary for this (likely Premium) account; a
+  non-Premium account is the case it exists for and has not been measured.
+- Google's rate limiting on the exit IP shows up as 403 "Sorry..." pages; on a phone's own
+  IP this should be rarer.
+- Upstream churn: the EJS solver must follow player changes (update the vendored files
+  from yt-dlp-ejs releases); SABR-only responses would need a new `Delivery`.
+
 ## Tests
 
 ```
@@ -199,6 +348,10 @@ cargo test -p volna-streams                                   # unit + fake goog
 cargo test -p volna-streams --test live -- --ignored --nocapture
 cargo test -p volna live_stream_range -- --ignored            # volna:// handler, real track
 cargo test -p volna-streams --no-default-features              # builds without yt-dlp
+cargo test -p volna-streams --no-default-features --features innertube
+VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome \
+  cargo test -p volna-streams --features innertube-deno --test innertube_live \
+  -- --ignored --nocapture --test-threads=1
 VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 cargo test \
   --manifest-path crates/streams-rustypipe/Cargo.toml \
   --test rustypipe_live -- --ignored --nocapture --test-threads=1
@@ -207,3 +360,7 @@ VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 cargo test \
 `rustypipe_live` also reads `VOLNA_TEST_CLIENTS=AndroidVr,Ios` (narrow the matrix),
 `VOLNA_TEST_PAUSE_MS` (pause between player requests, default 1500) and
 `VOLNA_TEST_COOKIES_TXT` (a Netscape cookies.txt for a logged-in pass).
+
+`innertube_live` reads `VOLNA_TEST_COOKIES=<browser>` or `VOLNA_TEST_COOKIES_TXT`,
+`VOLNA_TEST_PAUSE_MS` (default 1000) and `VOLNA_TEST_MAIN_ONLY=1` (skip the anonymous and
+no-PO-token passes); `RUST_LOG` overrides its `volna_streams=debug` log.

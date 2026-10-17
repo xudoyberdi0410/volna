@@ -234,6 +234,44 @@ elsewhere, through `JsRuntime`.
 it. Pre-roll ads (`adPlacements`) are counted; `InnerTubeOptions::wait_for_ads` would sleep
 them out as yt-dlp's downloader does, off by default (no 403 seen without waiting).
 
+### YouTube session on mobile
+
+The apps sign in with Google in a WebView and hand its cookies to the core:
+`youtube_set_cookies {cookies}` (Netscape cookies.txt text; `""` signs out) and
+`youtube_auth_status`, both answering `{signedIn, account?}` (`account` is the display
+name from YTM's `account/account_menu`, looked up only when signed in). The core saves the
+text as `<dataDir>/youtube-cookies.txt` with mode 0600, loads it at init (the optional
+`youtubeCookies` init field replaces it), and swaps it into the running `InnerTube`
+backend: the next resolve fetches a fresh ytcfg with the new session, and cached stream
+URLs are dropped. `signedIn` means `LOGIN_INFO` plus one of the SAPISID cookies, as yt-dlp
+checks.
+
+What the WebView must export:
+
+- After the Google sign-in finishes, load `https://music.youtube.com/` once in the same
+  WebView. Google sets its session on `.google.com`; YouTube gets its own copy on
+  `.youtube.com` only through that redirect.
+- Export the cookies of `.youtube.com` (and host-only `music.youtube.com` /
+  `www.youtube.com`). The resolver sends only cookies that match `music.youtube.com` and
+  `www.youtube.com`; `.google.com` cookies (`SID`, `__Secure-1PSID`, `NID`, ...) may be
+  included but are never sent. Export every cookie of those domains rather than a list:
+  YouTube adds and rotates names.
+- The ones that matter, all on `.youtube.com`:
+  - `SAPISID`, `__Secure-1PAPISID`, `__Secure-3PAPISID`: the SAPISIDHASH /
+    SAPISID1PHASH / SAPISID3PHASH `Authorization` header is built from them (yt-dlp falls
+    back to `__Secure-3PAPISID` when `SAPISID` is missing, and so does Volna);
+  - `LOGIN_INFO`: required for `signedIn`;
+  - `SID`, `HSID`, `SSID`, `APISID`, `__Secure-1PSID`, `__Secure-3PSID`: the session itself;
+  - `__Secure-1PSIDTS`, `__Secure-3PSIDTS`, `SIDCC`, `__Secure-1PSIDCC`,
+    `__Secure-3PSIDCC`: short-lived and rotated by Google; re-export after the WebView has
+    been used, or the session may stop working;
+  - `VISITOR_INFO1_LIVE`, `VISITOR_PRIVACY_METADATA`, `PREF`, `YSC`: visitor state, harmless.
+- Netscape lines: `domain<TAB>includeSubdomains<TAB>path<TAB>secure<TAB>expiry<TAB>name<TAB>value`,
+  with `TRUE` for a domain cookie (leading dot) and `0` expiry for session cookies. The
+  cookie stores give these fields (`WKHTTPCookieStore.getAllCookies`; on Android
+  `CookieManager.getCookie(url)` returns only `name=value`, so write each pair with the
+  URL's domain, `.youtube.com`, and expiry `0`).
+
 ### JsRuntime contract
 
 The trait is `volna_streams::js::JsRuntime` (built without any feature);

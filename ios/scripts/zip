@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+# Minimal stand-in for Info-ZIP `zip -r [-y] [-q] [-X] out.zip paths...`
+# (xtool runs `zip -yqru0 app.ipa Payload` to pack the .ipa). Symlinks stay
+# links with -y. Only for machines without Info-ZIP: `sudo pacman -S zip` is better.
+import os, stat, sys, zipfile
+
+args = sys.argv[1:]
+flags = set()
+rest = []
+for a in args:
+    if a.startswith("-") and len(a) > 1 and not rest:
+        flags.update(a[1:])
+    else:
+        rest.append(a)
+if not rest:
+    sys.exit("zip shim: no archive")
+out, paths = rest[0], rest[1:]
+if not out.endswith(".zip") and not os.path.splitext(out)[1]:
+    out += ".zip"
+symlinks = "y" in flags
+
+def add(zf, path):
+    st = os.lstat(path)
+    if symlinks and stat.S_ISLNK(st.st_mode):
+        info = zipfile.ZipInfo(path)
+        info.create_system = 3
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(info, os.readlink(path))
+    elif stat.S_ISDIR(st.st_mode):
+        info = zipfile.ZipInfo(path.rstrip("/") + "/")
+        info.create_system = 3
+        info.external_attr = (stat.S_IFDIR | 0o755) << 16 | 0x10
+        zf.writestr(info, b"")
+        if "r" in flags:
+            for name in sorted(os.listdir(path)):
+                add(zf, os.path.join(path, name))
+    else:
+        zf.write(path, path, compress_type=zipfile.ZIP_DEFLATED)
+
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+    for p in paths:
+        add(zf, p.rstrip("/") if p != "/" else p)

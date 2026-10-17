@@ -91,18 +91,6 @@ final class AppModel {
         }
     }
 
-    /// Restarts the core (after a new Google sign-in, when the core cannot
-    /// take cookies at run time).
-    func restartCore() {
-        eventTask?.cancel()
-        bridge.handle(.stop)
-        core?.shutdown()
-        core = nil
-        api = nil
-        player = PlayerModel()
-        start()
-    }
-
     private func listen(_ core: Core) {
         eventTask?.cancel()
         let stream = core.events()

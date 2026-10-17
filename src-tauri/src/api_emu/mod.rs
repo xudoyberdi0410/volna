@@ -22,7 +22,6 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use http::{Response, StatusCode, header};
-use serde_json::Value;
 use volna_net::NetManager;
 use volna_ytm::{Album, Artist, Playlist, Track, YtmClient};
 
@@ -116,12 +115,18 @@ impl Query {
     }
 }
 
+/// Byte budget of the response cache. A page is 5–100 KB of JSON, so this
+/// holds a long browsing session while capping a runaway one.
+const RESPONSE_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
 /// The emulator: one YouTube Music client plus short-lived caches.
 pub struct ApiEmu {
     ytm: YtmClient,
     net: Arc<NetManager>,
-    /// Final JSON per request (path + sorted query).
-    responses: TtlCache<String, Arc<Value>>,
+    /// Final JSON per request (path + sorted query), already serialised:
+    /// a `serde_json::Value` tree takes several times the bytes of its text,
+    /// and a hit needs the bytes anyway.
+    responses: TtlCache<String, Arc<[u8]>>,
     /// Pages reused by several endpoints.
     artists: TtlCache<String, Arc<Artist>>,
     albums: TtlCache<String, Arc<Album>>,
@@ -139,7 +144,7 @@ impl ApiEmu {
         Self {
             ytm: YtmClient::new(net.client()),
             net,
-            responses: TtlCache::new(512, min(10)),
+            responses: TtlCache::with_budget(512, min(10), RESPONSE_CACHE_BYTES, |b| b.len()),
             artists: TtlCache::new(128, min(15)),
             albums: TtlCache::new(256, min(30)),
             radios: TtlCache::new(128, min(10)),
@@ -175,15 +180,17 @@ impl ApiEmu {
 
         let key = query.cache_key(&path);
         if let Some(hit) = self.responses.get(&key) {
-            return json_response(&hit);
+            return json_bytes_response(hit.to_vec());
         }
         let started = std::time::Instant::now();
         match self.dispatch(&path, &query).await {
             Ok(value) => {
                 tracing::debug!(%key, ms = started.elapsed().as_millis() as u64, "api");
-                let value = Arc::new(value);
-                self.responses.insert(key, value.clone());
-                json_response(&value)
+                let body =
+                    serde_json::to_vec(&value).expect("a serde_json::Value always serialises");
+                drop(value);
+                self.responses.insert(key, Arc::from(body.as_slice()));
+                json_bytes_response(body)
             }
             Err(e) => {
                 tracing::warn!(%key, "api failed: {e}");
@@ -203,8 +210,7 @@ fn normalise_path(path: &str) -> String {
     }
 }
 
-fn json_response(value: &Value) -> Response<Vec<u8>> {
-    let body = serde_json::to_vec(value).expect("a serde_json::Value always serialises");
+fn json_bytes_response(body: Vec<u8>) -> Response<Vec<u8>> {
     with_cors(Response::builder().status(StatusCode::OK))
         .header(header::CONTENT_TYPE, "application/json")
         .body(body)

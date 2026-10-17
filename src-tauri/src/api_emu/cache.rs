@@ -1,9 +1,11 @@
-//! Small in-memory LRU cache with a time-to-live.
+//! Small in-memory LRU cache with a time-to-live and an optional byte budget.
 //!
 //! InnerTube browse calls take 0.3–1.5 s and the UI asks for the same pages
 //! repeatedly (artist page → similar artists → bio, album-date enrichment),
 //! so api_emu keeps recent results for a few minutes. Capacities are a few
 //! hundred entries, so eviction scans linearly instead of keeping a list.
+//! Expired entries are swept on every insert, so an idle cache does not keep
+//! a whole browsing session alive until it happens to fill up.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -12,29 +14,56 @@ use std::time::{Duration, Instant};
 
 struct Entry<V> {
     value: V,
+    weight: usize,
     inserted: Instant,
     last_used: Instant,
+}
+
+struct Inner<K, V> {
+    map: HashMap<K, Entry<V>>,
+    /// Sum of `weight` over `map`.
+    weight: usize,
 }
 
 /// Thread-safe LRU + TTL map. Values are cloned out, so store `Arc`s for
 /// anything large.
 pub struct TtlCache<K, V> {
-    inner: Mutex<HashMap<K, Entry<V>>>,
+    inner: Mutex<Inner<K, V>>,
     capacity: usize,
     ttl: Duration,
+    /// Upper bound on the summed weights; `usize::MAX` for count-only caches.
+    max_weight: usize,
+    weigh: fn(&V) -> usize,
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
+    /// At most `capacity` entries, each kept for `ttl`.
     pub fn new(capacity: usize, ttl: Duration) -> Self {
+        Self::with_budget(capacity, ttl, usize::MAX, |_| 0)
+    }
+
+    /// Like [`Self::new`], and the entries' `weigh`ts (bytes, typically)
+    /// stay under `max_weight`. A value heavier than the budget is not kept.
+    pub fn with_budget(
+        capacity: usize,
+        ttl: Duration,
+        max_weight: usize,
+        weigh: fn(&V) -> usize,
+    ) -> Self {
         assert!(capacity > 0, "a cache needs room for one entry");
         Self {
-            inner: Mutex::new(HashMap::new()),
+            inner: Mutex::new(Inner {
+                map: HashMap::new(),
+                weight: 0,
+            }),
             capacity,
             ttl,
+            max_weight,
+            weigh,
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<K, Entry<V>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner<K, V>> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -44,18 +73,16 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
     }
 
     fn get_at(&self, key: &K, now: Instant) -> Option<V> {
-        let mut map = self.lock();
-        let expired = match map.get_mut(key) {
+        let mut inner = self.lock();
+        match inner.map.get_mut(key) {
             None => return None,
             Some(e) if now.duration_since(e.inserted) < self.ttl => {
                 e.last_used = now;
                 return Some(e.value.clone());
             }
-            Some(_) => true,
-        };
-        if expired {
-            map.remove(key);
+            Some(_) => {}
         }
+        inner.remove(key);
         None
     }
 
@@ -64,23 +91,30 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
     }
 
     fn insert_at(&self, key: K, value: V, now: Instant) {
-        let mut map = self.lock();
-        if !map.contains_key(&key) && map.len() >= self.capacity {
-            // Expired entries go first; otherwise the least recently used one.
-            map.retain(|_, e| now.duration_since(e.inserted) < self.ttl);
-            if map.len() >= self.capacity
-                && let Some(oldest) = map
-                    .iter()
-                    .min_by_key(|(_, e)| e.last_used)
-                    .map(|(k, _)| k.clone())
-            {
-                map.remove(&oldest);
-            }
+        let weight = (self.weigh)(&value);
+        let mut inner = self.lock();
+        inner.remove(&key);
+        if weight > self.max_weight {
+            return;
         }
-        map.insert(
+        inner.sweep(now, self.ttl);
+        while inner.map.len() >= self.capacity || inner.weight + weight > self.max_weight {
+            let Some(oldest) = inner
+                .map
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            inner.remove(&oldest);
+        }
+        inner.weight += weight;
+        inner.map.insert(
             key,
             Entry {
                 value,
+                weight,
                 inserted: now,
                 last_used: now,
             },
@@ -89,7 +123,33 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.lock().len()
+        self.lock().map.len()
+    }
+
+    #[cfg(test)]
+    fn weight(&self) -> usize {
+        self.lock().weight
+    }
+}
+
+impl<K: Eq + Hash, V> Inner<K, V> {
+    fn remove(&mut self, key: &K) {
+        if let Some(e) = self.map.remove(key) {
+            self.weight -= e.weight;
+        }
+    }
+
+    /// Drops every entry older than `ttl`.
+    fn sweep(&mut self, now: Instant, ttl: Duration) {
+        let mut freed = 0;
+        self.map.retain(|_, e| {
+            let keep = now.duration_since(e.inserted) < ttl;
+            if !keep {
+                freed += e.weight;
+            }
+            keep
+        });
+        self.weight -= freed;
     }
 }
 
@@ -146,6 +206,49 @@ mod tests {
             Some(2)
         );
         assert_eq!(c.get_at(&"new", t0 + TTL + Duration::from_secs(2)), Some(3));
+    }
+
+    #[test]
+    fn insert_sweeps_expired_entries() {
+        let c = TtlCache::new(8, TTL);
+        let t0 = Instant::now();
+        c.insert_at("a", 1, t0);
+        c.insert_at("b", 2, t0);
+        c.insert_at("c", 3, t0 + TTL);
+        assert_eq!(c.len(), 1, "a and b expired before c went in");
+    }
+
+    #[test]
+    fn byte_budget_evicts_least_recently_used() {
+        let c: TtlCache<&str, Vec<u8>> = TtlCache::with_budget(8, TTL, 10, Vec::len);
+        let t0 = Instant::now();
+        c.insert_at("a", vec![0; 4], t0);
+        c.insert_at("b", vec![0; 4], t0 + Duration::from_secs(1));
+        assert_eq!(c.weight(), 8);
+        c.insert_at("c", vec![0; 4], t0 + Duration::from_secs(2));
+        assert_eq!(c.weight(), 8);
+        assert_eq!(c.get_at(&"a", t0 + Duration::from_secs(3)), None);
+        assert!(c.get_at(&"b", t0 + Duration::from_secs(3)).is_some());
+        assert!(c.get_at(&"c", t0 + Duration::from_secs(3)).is_some());
+    }
+
+    #[test]
+    fn oversized_values_are_not_kept() {
+        let c: TtlCache<&str, Vec<u8>> = TtlCache::with_budget(8, TTL, 10, Vec::len);
+        c.insert("small", vec![0; 4]);
+        c.insert("huge", vec![0; 11]);
+        assert_eq!(c.get(&"huge"), None);
+        assert_eq!(c.get(&"small").map(|v| v.len()), Some(4));
+        assert_eq!(c.weight(), 4);
+    }
+
+    #[test]
+    fn overwriting_replaces_the_weight() {
+        let c: TtlCache<&str, Vec<u8>> = TtlCache::with_budget(8, TTL, 10, Vec::len);
+        c.insert("a", vec![0; 6]);
+        c.insert("a", vec![0; 8]);
+        assert_eq!(c.weight(), 8);
+        assert_eq!(c.len(), 1);
     }
 
     #[test]

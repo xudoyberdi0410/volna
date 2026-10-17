@@ -80,7 +80,9 @@ void main() {
     ));
 
     // Search, then open the first album.
-    await wait(() => find.text('Лучший результат').evaluate().isNotEmpty || find.byType(TrackRow).evaluate().isNotEmpty,
+    await wait(
+        () => [find.text('Лучший результат'), find.byType(TrackRow), find.byType(ItemCard)]
+            .any((f) => f.evaluate().isNotEmpty),
         what: 'search results');
     await shot('live_search');
     await tester.tap(find.widgetWithText(ChoiceChip, 'Альбомы'));

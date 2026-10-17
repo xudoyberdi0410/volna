@@ -1,6 +1,6 @@
 [package]
 name = "volna-daemon"
-description = "Volna without the webview: player, tray, MPRIS, network, wave and the volna:// handler"
+description = "Volna without a GUI toolkit: hosts volna-core with GStreamer, the tray, MPRIS, the IPC socket and the volna:// handler"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -18,17 +18,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 http = { workspace = true }
 anyhow = { workspace = true }
-url = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
-reqwest = { workspace = true }
-base64 = "0.22"
 dirs = "7"
 mimalloc = "0.1.52"
-volna-ytm = { workspace = true }
-volna-net = { workspace = true }
 volna-streams = { workspace = true, features = ["ytdlp"] }
 volna-player = { workspace = true, features = ["gstreamer"] }
 volna-core = { workspace = true }

@@ -17,7 +17,7 @@ http://127.0.0.1:<random port>/<random token>/stream/<videoId>[?q=low]
 
 The page gets the prefix as `window.__VOLNA__.streamBase`, set by an init script before any
 page script runs. The `stream_base` command returns the same value. For patch F2 in
-`hifi-api-contract.md`, use:
+`hifi-api-contract.md` (the old UI, removed in phase 4), it used:
 
 ```js
 url: `${window.__VOLNA__.streamBase}/${encodeURIComponent(id)}${low ? '?q=low' : ''}`

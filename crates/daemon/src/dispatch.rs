@@ -1,7 +1,6 @@
-//! Tauri command names → handlers. The window process forwards every
-//! `invoke` it does not handle itself (`yandex_export`, `app_ready_to_close`)
-//! as a [`crate::ipc::Msg::Call`]; `volna_core` runs it with the same names,
-//! argument keys and results. Only `app_quit` is the daemon's own.
+//! Command names → handlers. The window sends every command as a
+//! [`crate::ipc::Msg::Call`]; `volna_core` runs it. Only `app_quit` is the
+//! daemon's own.
 
 use serde_json::Value;
 

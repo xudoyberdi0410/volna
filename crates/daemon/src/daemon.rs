@@ -1,7 +1,7 @@
 //! The `volna` daemon (`docs/native-player.md` §9): everything but the
-//! webview. It owns the player, the audio server, the network, the wave,
+//! window. It owns the player, the audio server, the network, the wave,
 //! MPRIS and the tray, serves the window process over [`crate::ipc`], and
-//! starts `volna-window` on demand. GTK and WebKit are never loaded here.
+//! starts `volna-window` on demand. No GUI toolkit is loaded here.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,7 +14,6 @@ use volna_core::{Core, CoreConfig, StreamBackend};
 
 pub use volna_core::{Dirs, IDENTIFIER};
 
-use crate::api_emu::ApiEmu;
 use crate::ipc::{self, Frame, Msg, Role};
 use crate::player::{self, forward::EventSink};
 
@@ -63,8 +62,6 @@ impl WindowLink {
 /// (`d.app`, `d.player`, `d.library`, …).
 pub struct Daemon {
     pub core: Arc<Core>,
-    /// `volna://api/` for the old webview UI.
-    pub api: Arc<ApiEmu>,
     window: WindowLink,
     child: Mutex<Option<std::process::Child>>,
     quitting: AtomicBool,
@@ -258,10 +255,8 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
         backend: StreamBackend::locate_ytdlp(),
     };
     let core = Core::start(config, player::gstreamer_output()).await?;
-    let api = crate::state::AppState::from_core(core.app.clone()).api;
     let daemon = Arc::new(Daemon {
         core,
-        api,
         window: WindowLink::default(),
         child: Mutex::new(None),
         quitting: AtomicBool::new(false),
@@ -457,7 +452,7 @@ async fn protocol_call(
         req = req.header(k, v);
     }
     let resp = match req.body(body) {
-        Ok(req) => crate::protocol::handle_with(&d.app, &d.api, req).await,
+        Ok(req) => crate::protocol::handle(&d.app, req).await,
         Err(e) => crate::protocol::json_error(http::StatusCode::BAD_REQUEST, &e.to_string()),
     };
     let (parts, body) = resp.into_parts();

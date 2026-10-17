@@ -1,6 +1,7 @@
-//! YouTube Music models → the hifi-api (TIDAL-shaped) JSON the Monochrome UI
-//! reads. Pure functions; the field rules come from
-//! `docs/hifi-api-contract.md` §2 and §9.
+//! YouTube Music models → the hifi-api (TIDAL-shaped) JSON the old Monochrome
+//! UI read. Still the shape of player queue entries (`raw`), wave pages and
+//! the legacy library import. Pure functions; the field rules came from
+//! `docs/hifi-api-contract.md` (removed with the old UI in phase 4).
 
 use serde_json::{Map, Value, json};
 use volna_ytm::{
@@ -15,7 +16,7 @@ pub const COVER_SIZE: u32 = 544;
 
 /// `volna://<route><path>?<query>` on Linux/macOS,
 /// `http://volna.localhost/<route><path>?<query>` on Windows (WebView2).
-/// Mirrors `ui/js/volna-url.js`.
+/// Mirrors the old UI's `ui/js/volna-url.js`.
 pub fn volna_url(route: &str, path: &str, query: &[(&str, &str)]) -> String {
     let base = if cfg!(windows) {
         format!("http://volna.localhost/{route}")

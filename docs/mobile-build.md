@@ -23,7 +23,7 @@ over the FFI JS callback (players cached in `<cacheDir>/players`, cookies from
 `volna-player` builds without GStreamer when its `gstreamer` feature is off,
 and `volna-streams` without yt-dlp when its `ytdlp` feature is off; both are
 workspace dependencies with `default-features = false`, and `volna-core/ytdlp`
-turns `volna-streams/ytdlp` on (the daemon and `src-tauri` ask for it directly).
+turns `volna-streams/ytdlp` on (the daemon asks for it directly).
 
 ## One-time setup
 

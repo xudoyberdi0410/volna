@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import '../../api/models.dart';
 import '../widgets/cards.dart';
 import '../widgets/cover.dart';
+import '../widgets/format.dart';
 import '../widgets/states.dart';
 import '../widgets/track_actions.dart';
 import '../widgets/track_row.dart';
@@ -454,7 +455,15 @@ class _TopResult extends ConsumerWidget {
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Text(itemSubtitle(it),
+                        child: Text(
+                            switch (it) {
+                              // The badge already says it is an album.
+                              AlbumItem(:final album) => [
+                                  if (album.year != null) '${album.year}',
+                                  artistNames(album.artists),
+                                ].where((s) => s.isNotEmpty).join(' · '),
+                              _ => itemSubtitle(it),
+                            },
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),

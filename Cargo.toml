@@ -6,6 +6,7 @@ members = [
     "crates/net",
     "crates/streams",
     "crates/wave",
+    "crates/player",
 ]
 
 [workspace.package]
@@ -19,6 +20,7 @@ volna-ytm = { path = "crates/ytm" }
 volna-net = { path = "crates/net" }
 volna-streams = { path = "crates/streams" }
 volna-wave = { path = "crates/wave" }
+volna-player = { path = "crates/player" }
 
 anyhow = "1"
 thiserror = "2"

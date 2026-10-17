@@ -33,7 +33,6 @@ import {
 import { db } from './db.js';
 import { getVibrantColorFromImage } from './vibrant-color.js';
 import { Visualizer } from './visualizer.js';
-import { audioContextManager } from './audio-context.js';
 import { navigate } from './router.js';
 import { sidePanelManager } from './side-panel.js';
 import {
@@ -1237,7 +1236,8 @@ export class UIRenderer {
         const artist = document.getElementById('fullscreen-track-artist');
         const nextTrackEl = document.getElementById('fullscreen-next-track');
 
-        const isRealVideo = track.type === 'video';
+        // Music videos play as audio in the native player: show the cover.
+        const isRealVideo = false;
         const visualizerContainer = document.getElementById('visualizer-container');
         if (overlay) overlay.classList.toggle('is-video-mode', isRealVideo);
 
@@ -1696,16 +1696,6 @@ export class UIRenderer {
 
     async startFullscreenVisualizer(activeElement, overlay) {
         if (!activeElement || !overlay) return false;
-
-        if (audioContextManager.isReady()) {
-            audioContextManager.changeSource(activeElement);
-            await audioContextManager.resume();
-        } else {
-            audioContextManager.init(activeElement);
-            if (audioContextManager.isReady()) {
-                await audioContextManager.resume();
-            }
-        }
 
         if (!this.visualizer) {
             const canvas = document.getElementById('visualizer-canvas');

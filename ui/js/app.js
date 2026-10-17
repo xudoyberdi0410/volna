@@ -283,13 +283,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await MusicAPI.initialize(apiSettings);
 
-    const audioPlayer = document.getElementById('audio-player');
-
     // i love ios and macos!!!! webkit fucking SUCKS BULLSHIT sorry ios/macos heads yall getting lossless only playback
     const storedQuality = localStorage.getItem('playback-quality') || 'HI_RES_LOSSLESS';
     const currentQuality = normalizeQualityToken(storedQuality) || storedQuality;
     if (currentQuality !== storedQuality) localStorage.setItem('playback-quality', currentQuality);
-    await Player.initialize(audioPlayer, MusicAPI.instance, currentQuality);
+    await Player.initialize(null, MusicAPI.instance, currentQuality);
+    // The native player's media shim (js/remote-media.js); audio plays in Rust.
+    const audioPlayer = Player.instance.activeElement;
+    // The window is closing (the player keeps playing in the tray): flush and let Rust destroy it.
+    Player.instance.on('will-close', async () => {
+        try {
+            const { listeningTracker } = await import('./listening-tracker.js');
+            listeningTracker.forceFlush();
+        } catch (e) {
+            console.warn('[app] flush before close failed', e);
+        }
+        await Player.instance.readyToClose();
+    });
 
     // The ArtistGrid unreleased tracker is not loaded: it fetched a CSV
     // straight from artistgrid.cx, bypassing the app's proxy.
@@ -775,12 +785,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (Player.instance.activeElement !== event.currentTarget) return;
         if (!Player.instance.currentTrack) return;
 
-        // Update UI with current track info for theme
-        UIRenderer.instance.setCurrentTrack(Player.instance.currentTrack);
-
-        // Update Media Session with new track
-        Player.instance.updateMediaSession(Player.instance.currentTrack);
-
+        // The now-playing bar and theme follow track changes in Player.renderNowPlaying.
         const currentTrackId = Player.instance.currentTrack.id;
         if (currentTrackId === previousTrackId) return;
         previousTrackId = currentTrackId;

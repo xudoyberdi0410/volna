@@ -35,6 +35,16 @@ pub enum StreamError {
     #[error("unexpected yt-dlp output: {0}")]
     BadYtDlpOutput(String),
 
+    /// An in-process backend (RustyPipe) failed for another reason
+    /// (player API changed, deobfuscation broken, network error, ...).
+    #[error("resolve failed: {0}")]
+    ResolveFailed(String),
+
+    /// The video has no audio stream in the requested codec (e.g. no AAC
+    /// for iOS), or only streams without a plain URL (SABR).
+    #[error("no suitable audio stream: {0}")]
+    NoAudioStream(String),
+
     #[error("upstream request failed: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -60,12 +70,13 @@ impl StreamError {
         match self {
             Self::InvalidVideoId(_) | Self::InvalidUrl(_) | Self::InvalidCookies(_) => 400,
             Self::HostNotAllowed(_) | Self::BotCheck(_) => 403,
-            Self::Unavailable(_) => 404,
+            Self::Unavailable(_) | Self::NoAudioStream(_) => 404,
             Self::RangeNotSatisfiable { .. } => 416,
             Self::YtDlpNotFound | Self::YtDlpSpawn(_) => 500,
             Self::YtDlpTimeout(_) => 504,
             Self::YtDlpFailed(_)
             | Self::BadYtDlpOutput(_)
+            | Self::ResolveFailed(_)
             | Self::Http(_)
             | Self::UpstreamStatus(_)
             | Self::ImageTooLarge(_) => 502,

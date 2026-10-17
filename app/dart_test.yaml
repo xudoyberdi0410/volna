@@ -1,0 +1,3 @@
+tags:
+  # Screenshot tests (test/goldens/*.png); rendered with the Flutter SDK's Roboto.
+  golden:

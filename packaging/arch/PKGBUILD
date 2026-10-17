@@ -2,7 +2,7 @@
 # Сборка: cd packaging/arch && makepkg -si
 pkgname=volna
 pkgver=0.1.0
-pkgrel=6
+pkgrel=7
 pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
 arch=('x86_64')
 license=('Apache-2.0')
@@ -18,10 +18,14 @@ build() {
   cd "$_root/ui"
   bun install --frozen-lockfile
   bun run tauri build --no-bundle
+  cd "$_root"
+  cargo build --release -p volna-daemon
 }
 
 package() {
+  # volna: the daemon (player, tray, MPRIS); volna-window: the UI process it starts.
   install -Dm755 "$_root/target/release/volna" "$pkgdir/usr/bin/volna"
+  install -Dm755 "$_root/target/release/volna-window" "$pkgdir/usr/bin/volna-window"
   install -Dm644 "$_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/volna.png"
   install -Dm644 "$_root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/volna.png"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/volna.desktop" <<DESK
@@ -32,6 +36,6 @@ Comment=YouTube Music с «Моей волной»
 Exec=volna
 Icon=volna
 Categories=AudioVideo;Audio;Player;
-StartupWMClass=volna
+StartupWMClass=volna-window
 DESK
 }

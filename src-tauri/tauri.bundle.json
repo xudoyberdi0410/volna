@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "externalBin": ["binaries/volna-xray", "binaries/volna-yt-dlp"]
+    "externalBin": ["binaries/volna", "binaries/volna-xray", "binaries/volna-yt-dlp"]
   }
 }

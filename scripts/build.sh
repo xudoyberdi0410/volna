@@ -23,6 +23,12 @@ for name in volna-xray volna-yt-dlp; do
     fi
 done
 
+# The `volna` daemon ships next to `volna-window` as a sidecar (installed
+# without the triple suffix); the window starts it when it is not running.
+(cd "$ROOT" && cargo build --release -p volna-daemon)
+mkdir -p "$ROOT/src-tauri/binaries"
+cp "$ROOT/target/release/volna$exe" "$ROOT/src-tauri/binaries/volna-$triple$exe"
+
 cd "$ROOT/ui"
 [[ -d node_modules ]] || bun install --frozen-lockfile
 bun run tauri build --config ../src-tauri/tauri.bundle.json "$@"

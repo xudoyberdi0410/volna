@@ -6,9 +6,13 @@
 ## Где что
 
 - `ui/` — фронт (форк Monochrome, JS/Vite). `ui-upstream/` — нетронутый оригинал для сравнения.
-- `src-tauri/` — приложение: `protocol.rs` (схема `volna://`), `api_emu/` (эмуляция TIDAL
-  hifi-api, которую ждёт фронт), `network.rs` (настройки сети и cookies), `wave*.rs`, `yandex.rs` (вход в Яндекс
-  и выгрузка библиотеки; сопоставление с YTM — `ui/js/yandex-import.js`).
+- `crates/daemon` — бинарник `volna`: демон без GTK/WebKit (плеер, трей, MPRIS, сеть, волна,
+  обработчик `volna://`: `protocol.rs`, `network.rs`, `wave.rs`, `player/`, `dispatch.rs`, `ipc.rs`).
+  `api_emu/` (эмуляция TIDAL hifi-api) лежит в `src-tauri/src/api_emu` и подключён в демон через `#[path]`.
+- `src-tauri/` — бинарник `volna-window`: окно (Tauri), всё пересылает демону по сокету
+  (`shell.rs`); `yandex.rs` (вход в Яндекс и выгрузка библиотеки; сопоставление с YTM —
+  `ui/js/yandex-import.js`) работает в окне. Схема процессов — `docs/native-player.md` §9.
+- `crates/player` — нативный плеер на GStreamer (очередь, EQ, визуализатор).
 - `crates/ytm` — свой InnerTube-клиент YouTube Music (WEB_REMIX).
 - `crates/net` — reqwest-клиент с прокси (Direct / URL / VLESS через xray).
 - `crates/streams` — резолв аудио через yt-dlp и локальный аудиосервер с Range.
@@ -21,11 +25,11 @@
 ```sh
 cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
 cd ui && bun run build                 # фронт
-cd ui && bun run tauri dev             # приложение в dev-режиме
+cargo build -p volna-daemon && (cd ui && bun run tauri dev)   # dev: окно само запустит target/debug/volna
 cd packaging/arch && makepkg -f        # пакет; ставить: sudo pacman -U volna-*.pkg.tar.zst
 # живые тесты через реальный YouTube, как настроено приложение:
 VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome \
-  cargo test -p volna api_live -- --ignored --nocapture --test-threads=1
+  cargo test -p volna-daemon api_live -- --ignored --nocapture --test-threads=1
 ```
 
 При выпуске нового пакета увеличивать `pkgrel` в PKGBUILD.

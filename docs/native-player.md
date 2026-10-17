@@ -789,3 +789,57 @@ API gets used.
 - Radio/autoplay refill through YouTube Music radio in Rust: accepted.
 - Repeat one + Next advances; shelf bands honour Q: accepted.
 - `docs/STRUCTURE.md`: adding `crates/player` to the workspace members is allowed.
+
+## 9. Process split: `volna` daemon + `volna-window` (2026-10-17)
+
+Loading GTK/WebKit/JSC/libsoup alone costs ~32 MB RSS, and a destroyed webview still leaves
+Mesa (libLLVM, libgallium) and WebKit's heaps in the process: one process stayed at ~220 MB
+with the window closed. So the tray-resident part is now its own binary that never links the
+GUI stack. The frontend did not change: same command names, events, payloads and Channel.
+
+```
+volna (crates/daemon, bin "volna")                 volna-window (src-tauri, bin "volna-window")
+  player engine + hooks, journal, player.json        Tauri + webview, nothing else
+  audio server, AppState, network/xray, wave          invoke → IPC Call  ─────────────┐
+  volna:// handler (protocol.rs, api_emu)             volna:// → IPC Proto ───────────┤
+  MPRIS, ksni tray, single instance                   IPC Event → emit_to("main")  ◄──┤
+  spawns volna-window on demand                       IPC Vis → the page's Channel ◄──┤
+        ▲  $XDG_RUNTIME_DIR/volna/daemon.sock  ◄──────────────────────────────────────┘
+```
+
+- **Binaries.** `crates/daemon` (package `volna-daemon`, lib `volna_daemon`, bin `volna`) holds
+  everything that used to be in `src-tauri` except the webview: `state`, `protocol`, `media`,
+  `settings`, `network`, `wave`, `commands`, `player/*`. `api_emu` is still physically in
+  `src-tauri/src/api_emu` (it had uncommitted edits) and is compiled into the daemon through
+  `#[path]`. `src-tauri` (package `volna`, bin `volna-window`, `mainBinaryName` in
+  `tauri.conf.json`) keeps `shell.rs` (forwarding), `webview_memory.rs` and `yandex.rs`. The
+  daemon's `readelf -d` lists only GStreamer, GLib/GIO and libc; `/proc/<pid>/maps` has no
+  webkit/gtk/LLVM/gallium.
+- **IPC** (`crates/daemon/src/ipc.rs`): frames of `u32 LE header length, u32 LE body length,
+  JSON header, raw body`. Messages: `hello{role: window|control}`, `welcome{stream_base}`,
+  `call{id, cmd, args}` / `reply{id, ok|err}`, `proto{id, method, uri, headers}+body` /
+  `proto_reply{id, status, headers}+body`, `event{name, payload}`, `vis`+frame, `show`, `quit`.
+  `VOLNA_SOCKET` overrides the path (test instances). Windows: loopback TCP, port and a random
+  token in `daemon.port` next to the socket path (compiles in CI only; untested).
+- **Commands.** The window's invoke handler answers `yandex_export` (it opens the sign-in
+  window; its `AppState` exists only for the yt-dlp cookie dump) and `app_ready_to_close`
+  itself and forwards every other command with its JSON args unchanged;
+  `crates/daemon/src/dispatch.rs` runs them with the same argument keys. For
+  `player_visualizer_start` the window keeps the page's Channel and forwards `{fps}`; the
+  daemon sends each 3608-byte frame as a `vis` body.
+- **`volna://`** is forwarded as `proto` frames and answered by the same `protocol::handle`, so
+  the webview still never talks to Google. `window.__VOLNA__.streamBase` is the daemon's audio
+  server (the page no longer plays audio).
+- **Lifecycle.** `volna` (desktop entry): if a daemon answers on the socket, ask it to show the
+  window and exit; else become the daemon and start `volna-window`. `volna --tray` starts
+  without a window, `volna --quit` quits a running daemon, `volna --window` runs the window
+  binary. `volna-window` without a daemon starts `volna --tray` and connects. Tray left click,
+  «Показать Volna», MPRIS Raise and a second launch focus the window or start a new one.
+  Closing the window: `app:will-close`, up to 700 ms for `app_ready_to_close`, then the window
+  process exits. Quit (tray, MPRIS, `app_quit`, SIGTERM): the daemon tells the window to quit,
+  saves the player, stops xray, removes the socket and exits.
+- **Measured** (release, playing, window closed, 30 s): RSS 51.5 MB, PSS 41.6 MB (anon 22 MB,
+  file 21 MB, shmem 8 MB of audio buffers). Five open/close cycles: RSS stayed at 51–52 MB, no
+  zombies. With the window open the window process is ~170 MB on its own.
+- **Not done:** no tray on Windows (the daemon has no GUI toolkit there; a second launch shows
+  the window), SMTC.

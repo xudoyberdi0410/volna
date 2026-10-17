@@ -36,6 +36,27 @@ pub fn track_input(t: &Track, origin: Origin) -> TrackInput {
     }
 }
 
+/// A queue entry as the scrobblers see it.
+pub fn scrobble_track(t: &PlayerTrack) -> volna_scrobble::Track {
+    volna_scrobble::Track {
+        title: t.title.clone(),
+        artists: t
+            .artists
+            .iter()
+            .map(|a| a.name.clone())
+            .filter(|n| !n.is_empty() && n != "Unknown artist")
+            .collect(),
+        album: t
+            .album
+            .as_ref()
+            .map(|a| a.title.clone())
+            .filter(|a| !a.is_empty()),
+        duration: t.duration,
+        track_number: None,
+        video_id: Some(t.id.clone()).filter(|v| !v.is_empty()),
+    }
+}
+
 /// A queue entry as the wave sees it (the same rules as `wave::UiTrack`).
 pub fn ytm_track(t: &PlayerTrack) -> Track {
     Track {

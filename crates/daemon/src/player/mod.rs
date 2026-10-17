@@ -40,7 +40,13 @@ impl PlayerState {
 
 /// Starts the engine (restoring the queue paused). Call inside the tokio
 /// runtime, after the audio server is bound.
-pub fn setup(data: &Path, config: &Path, state: &AppState, wave: &WaveState) -> PlayerState {
+pub fn setup(
+    data: &Path,
+    config: &Path,
+    state: &AppState,
+    wave: &WaveState,
+    scrobble: &volna_scrobble::Scrobbling,
+) -> PlayerState {
     let journal = Arc::new(Journal::open(&data.join("player-journal.jsonl")));
     let handle = match volna_player::init_gstreamer() {
         Ok(()) => {
@@ -50,6 +56,7 @@ pub fn setup(data: &Path, config: &Path, state: &AppState, wave: &WaveState) -> 
                 wave: wave.engine(),
                 ytm: wave.ytm().clone(),
                 journal: journal.clone(),
+                scrobble: scrobble.clone(),
             };
             let paths = volna_player::persist::Paths {
                 queue: data.join("player-queue.json"),

@@ -119,11 +119,26 @@ class ListeningTracker {
         this._flush();
     }
 
+    /**
+     * A finished play reported by the native player's journal
+     * (js/player-journal.js): the same signals onTrackStart/onTimeUpdate and
+     * onSkip/onTrackEnd used to collect from <audio>. A play that did not
+     * reach the natural end counts as a skip, as switching tracks did.
+     */
+    recordPlay(track, playedSeconds, durationSeconds, ended, at = Date.now()) {
+        if (!track || !track.id) return;
+        const played = Math.max(0, Number(playedSeconds) || 0);
+        const duration = Math.max(0, Number(durationSeconds) || 0);
+        const skipped = !ended;
+        this._recordTrackSignal(track.id, played, duration, skipped, at);
+        this.updateArtistAffinity(track, played, duration, skipped);
+    }
+
     _findTrackMeta(_trackId) {
         return null;
     }
 
-    _recordTrackSignal(trackId, playTimeS, durationS, wasSkipped) {
+    _recordTrackSignal(trackId, playTimeS, durationS, wasSkipped, at = Date.now()) {
         const d = this._load();
         if (!d.tracks[trackId]) {
             d.tracks[trackId] = {
@@ -138,7 +153,7 @@ class ListeningTracker {
         const t = d.tracks[trackId];
         t.playCount++;
         t.totalPlayTime += playTimeS;
-        t.lastPlayed = Date.now();
+        t.lastPlayed = at;
 
         const completionRatio = durationS > 0 ? Math.min(playTimeS / durationS, 1) : 0;
         t.avgCompletionRatio =

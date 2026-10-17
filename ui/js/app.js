@@ -29,6 +29,7 @@ import './network-settings.js';
 import { initWave } from './wave.js';
 import { initYandexImport } from './yandex-import.js';
 import { installPlaybackFailureHandler } from './playback-failures.js';
+import { installJournal } from './player-journal.js';
 import {
     parseCSV,
     parseJSPF,
@@ -290,11 +291,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     await Player.initialize(null, MusicAPI.instance, currentQuality);
     // The native player's media shim (js/remote-media.js); audio plays in Rust.
     const audioPlayer = Player.instance.activeElement;
+    // History, listening stats and scrobbles come from the player journal (set up below).
+    let journalReady = Promise.resolve(null);
     // The window is closing (the player keeps playing in the tray): flush and let Rust destroy it.
     Player.instance.on('will-close', async () => {
         try {
             const { listeningTracker } = await import('./listening-tracker.js');
             listeningTracker.forceFlush();
+            await (await journalReady)?.flush();
         } catch (e) {
             console.warn('[app] flush before close failed', e);
         }
@@ -451,6 +455,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     await initializePlayerEvents(Player.instance, audioPlayer, scrobbler, UIRenderer.instance);
+    journalReady = installJournal(Player.instance, scrobbler, UIRenderer.instance).catch((e) => {
+        console.error('[journal] catch-up failed', e);
+        return null;
+    });
     initializeTrackInteractions(
         Player.instance,
         MusicAPI.instance,

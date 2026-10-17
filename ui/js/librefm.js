@@ -1,4 +1,4 @@
-import { libreFmSettings, lastFMStorage } from './storage.js';
+import { libreFmSettings } from './storage.js';
 
 export class LibreFmScrobbler {
     constructor() {
@@ -204,21 +204,10 @@ export class LibreFmScrobbler {
             await this.makeRequest('track.updateNowPlaying', params, true);
 
             console.log('[Libre.fm] Now playing updated:', scrobbleTitle);
-
-            const scrobblePercentage = lastFMStorage.getScrobblePercentage() / 100;
-            this.scrobbleThreshold = Math.min(track.duration * scrobblePercentage, 240);
-            this.scheduleScrobble(this.scrobbleThreshold * 1000);
+            // Scrobbles come from the player journal (js/player-journal.js), with the play's start time.
         } catch (error) {
             console.error('[Libre.fm] Failed to update now playing:', error);
         }
-    }
-
-    scheduleScrobble(delay) {
-        this.clearScrobbleTimer();
-
-        this.scrobbleTimer = setTimeout(async () => {
-            await this.scrobbleCurrentTrack();
-        }, delay);
     }
 
     clearScrobbleTimer() {
@@ -228,41 +217,24 @@ export class LibreFmScrobbler {
         }
     }
 
-    async scrobbleCurrentTrack() {
-        if (!this.isAuthenticated() || !this.currentTrack || this.hasScrobbled) return;
-
-        this.isScrobbling = true;
-
+    /** Scrobbles a finished play with the time it started (unix seconds). */
+    async scrobbleAt(track, unixSeconds) {
+        if (!this.isAuthenticated() || !track) return;
         try {
-            const timestamp = Math.floor(Date.now() / 1000);
-            const scrobbleTitle = this.currentTrack.cleanTitle || this.currentTrack.title;
-
+            const scrobbleTitle = track.cleanTitle || track.title;
             const params = {
-                artist: this._getScrobbleArtist(this.currentTrack),
+                artist: this._getScrobbleArtist(track),
                 track: scrobbleTitle,
-                timestamp: timestamp,
+                timestamp: Math.floor(unixSeconds),
             };
-
-            if (this.currentTrack.album?.title) {
-                params.album = this.currentTrack.album.title;
-            }
-
-            if (this.currentTrack.duration) {
-                params.duration = Math.floor(this.currentTrack.duration);
-            }
-
-            if (this.currentTrack.trackNumber) {
-                params.trackNumber = this.currentTrack.trackNumber;
-            }
+            if (track.album?.title) params.album = track.album.title;
+            if (track.duration) params.duration = Math.floor(track.duration);
+            if (track.trackNumber) params.trackNumber = track.trackNumber;
 
             await this.makeRequest('track.scrobble', params, true);
-
-            this.hasScrobbled = true;
-            console.log('[Libre.fm] Scrobbled:', this.currentTrack.cleanTitle || this.currentTrack.title);
+            console.log('[Libre.fm] Scrobbled:', scrobbleTitle);
         } catch (error) {
             console.error('[Libre.fm] Failed to scrobble:', error);
-        } finally {
-            this.isScrobbling = false;
         }
     }
 

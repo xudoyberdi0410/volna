@@ -164,9 +164,15 @@ export class MusicDatabase {
     }
 
     // History API
-    async addToHistory(track) {
+    /**
+     * Adds a play to Recent. `timestamp` (unix ms) is when it was played; the
+     * native player's journal passes it, so plays made while the window was
+     * closed land at their real time. Each track keeps only its latest play.
+     */
+    async addToHistory(track, { timestamp: playedAt } = {}) {
         const storeName = 'history_tracks';
         const minified = this._minifyItem(track.type || 'track', track);
+        const given = Number(playedAt);
 
         return this._retryTransaction((db) => {
             return new Promise((resolve, reject) => {
@@ -174,34 +180,44 @@ export class MusicDatabase {
                 const store = transaction.objectStore(storeName);
                 const index = store.index('timestamp');
 
-                const lastReq = index.openCursor(null, 'prev');
-                let lastTimestamp = 0;
+                // Timestamps are the key: bump by 1 ms while one is taken.
+                const freeKey = (ts, done) => {
+                    const req = store.getKey(ts);
+                    req.onsuccess = () => (req.result === undefined ? done(ts) : freeKey(ts + 1, done));
+                };
 
-                lastReq.onsuccess = (e) => {
-                    const cursor = e.target.result;
-                    if (cursor && lastTimestamp === 0) {
-                        const ts = Number(cursor.value.timestamp);
-                        lastTimestamp = Number.isFinite(ts) ? ts : 0;
-                    }
-
-                    const timestamp = Math.max(Date.now(), lastTimestamp + 1);
+                const write = (timestamp) => {
                     const entry = this._toCloneable({ ...minified, timestamp }, { id: track.id, timestamp });
-
+                    let newer = null;
                     const dedupeReq = index.openCursor(null, 'prev');
                     dedupeReq.onsuccess = (e2) => {
                         const dedupeCursor = e2.target.result;
                         if (dedupeCursor) {
                             const trackInHistory = dedupeCursor.value;
                             if (trackInHistory.id === track.id) {
-                                store.delete(dedupeCursor.primaryKey);
+                                if (Number(trackInHistory.timestamp) > timestamp) newer ??= trackInHistory;
+                                else store.delete(dedupeCursor.primaryKey);
                             }
                             dedupeCursor.continue();
+                        } else if (newer) {
+                            resolve(newer);
                         } else {
                             store.put(entry);
                             resolve(entry);
                         }
                     };
                 };
+
+                if (Number.isFinite(given) && given > 0) {
+                    freeKey(Math.floor(given), write);
+                } else {
+                    const lastReq = index.openCursor(null, 'prev');
+                    lastReq.onsuccess = (e) => {
+                        const cursor = e.target.result;
+                        const ts = cursor ? Number(cursor.value.timestamp) : 0;
+                        write(Math.max(Date.now(), (Number.isFinite(ts) ? ts : 0) + 1));
+                    };
+                }
 
                 transaction.onerror = (e) => reject(e.target.error);
             });

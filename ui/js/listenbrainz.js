@@ -1,4 +1,4 @@
-import { listenBrainzSettings, lastFMStorage } from './storage.js';
+import { listenBrainzSettings } from './storage.js';
 
 export class ListenBrainzScrobbler {
     constructor() {
@@ -201,17 +201,6 @@ export class ListenBrainzScrobbler {
         }
         this.clearScrobbleTimer();
         await this.submitListen('playing_now', track);
-
-        const scrobblePercentage = lastFMStorage.getScrobblePercentage() / 100;
-        this.scrobbleThreshold = Math.min(track.duration * scrobblePercentage, 240);
-        this.scheduleScrobble(this.scrobbleThreshold * 1000);
-    }
-
-    scheduleScrobble(delay) {
-        this.clearScrobbleTimer();
-        this.scrobbleTimer = setTimeout(async () => {
-            await this.scrobbleCurrentTrack();
-        }, delay);
     }
 
     clearScrobbleTimer() {
@@ -221,18 +210,10 @@ export class ListenBrainzScrobbler {
         }
     }
 
-    async scrobbleCurrentTrack() {
-        if (!this.isEnabled() || !this.currentTrack || this.hasScrobbled) return;
-
-        this.isScrobbling = true;
-
-        try {
-            const timestamp = Math.floor(Date.now() / 1000);
-            await this.submitListen('single', this.currentTrack, timestamp);
-            this.hasScrobbled = true;
-        } finally {
-            this.isScrobbling = false;
-        }
+    /** Scrobbles a finished play with the time it started (unix seconds); the player journal calls it. */
+    async scrobbleAt(track, unixSeconds) {
+        if (!this.isEnabled() || !track) return;
+        await this.submitListen('single', track, Math.floor(unixSeconds));
     }
 
     async onTrackChange(track) {

@@ -1,5 +1,4 @@
 import { malojaSettings } from './storage.js';
-import { lastFMStorage } from './storage.js';
 
 export class MalojaScrobbler {
     constructor() {
@@ -123,21 +122,7 @@ export class MalojaScrobbler {
             this.hasScrobbled = false;
         }
         this.clearScrobbleTimer();
-
-        // Maloja doesn't have a separate "now playing" endpoint like Last.fm
-        // It just scrobbles when the track is actually played
-        // We'll set up the timer to scrobble after the threshold
-
-        const scrobblePercentage = lastFMStorage.getScrobblePercentage() / 100;
-        this.scrobbleThreshold = Math.min(track.duration * scrobblePercentage, 240);
-        this.scheduleScrobble(this.scrobbleThreshold * 1000);
-    }
-
-    scheduleScrobble(delay) {
-        this.clearScrobbleTimer();
-        this.scrobbleTimer = setTimeout(async () => {
-            await this.scrobbleCurrentTrack();
-        }, delay);
+        // Maloja has no "now playing"; finished plays come from the player journal (scrobbleAt).
     }
 
     clearScrobbleTimer() {
@@ -147,18 +132,10 @@ export class MalojaScrobbler {
         }
     }
 
-    async scrobbleCurrentTrack() {
-        if (!this.isEnabled() || !this.currentTrack || this.hasScrobbled) return;
-
-        this.isScrobbling = true;
-
-        try {
-            const timestamp = Math.floor(Date.now() / 1000);
-            await this.submitScrobble(this.currentTrack, timestamp);
-            this.hasScrobbled = true;
-        } finally {
-            this.isScrobbling = false;
-        }
+    /** Scrobbles a finished play with the time it started (unix seconds); the player journal calls it. */
+    async scrobbleAt(track, unixSeconds) {
+        if (!this.isEnabled() || !track) return;
+        await this.submitScrobble(track, Math.floor(unixSeconds));
     }
 
     async onTrackChange(track) {

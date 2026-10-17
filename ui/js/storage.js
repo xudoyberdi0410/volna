@@ -2338,6 +2338,28 @@ export const homePageSettings = {
     },
 };
 
+/** The last native-player journal entry the UI has processed (docs/native-player.md §3.6). */
+export const journalCursor = {
+    KEY: 'volna-journal-seq',
+
+    get() {
+        try {
+            const n = Number(localStorage.getItem(this.KEY));
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        } catch {
+            return 0;
+        }
+    },
+
+    set(seq) {
+        try {
+            localStorage.setItem(this.KEY, String(seq));
+        } catch {
+            // storage unavailable: entries are processed again next time
+        }
+    },
+};
+
 export const radioSettings = {
     ENABLED_KEY: 'radio-enabled',
 

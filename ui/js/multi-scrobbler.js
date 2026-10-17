@@ -43,6 +43,18 @@ export class MultiScrobbler {
         );
     }
 
+    /** A finished play from the player journal; `unixSeconds` is when it started. */
+    async scrobbleAt(track, unixSeconds) {
+        await Promise.allSettled(
+            [
+                this.lastfm.scrobbleAt(track, unixSeconds),
+                this.listenbrainz.scrobbleAt(track, unixSeconds),
+                this.maloja.scrobbleAt(track, unixSeconds),
+                this.librefm.scrobbleAt(track, unixSeconds),
+            ].map((p) => p.catch(console.error))
+        );
+    }
+
     async onTrackChange(track) {
         await Promise.allSettled(
             [

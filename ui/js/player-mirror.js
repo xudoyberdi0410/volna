@@ -84,6 +84,22 @@ function fromPlayerTrack(pt) {
     };
 }
 
+/**
+ * The rich UI track for a PlayerTrack: its `ui` blob, else `prepare(raw)`,
+ * else one built from the entry, tagged with `_uid`, `_origin` and
+ * `isUnavailable`.
+ */
+export function enrichPlayerTrack(pt, prepare = (raw) => ({ ...raw })) {
+    let rich;
+    if (pt.ui && typeof pt.ui === 'object') rich = { ...pt.ui };
+    else if (pt.raw && typeof pt.raw === 'object') rich = prepare(pt.raw);
+    else rich = fromPlayerTrack(pt);
+    rich._uid = pt.uid;
+    rich._origin = pt.origin || 'user';
+    rich.isUnavailable = !!pt.unavailable;
+    return rich;
+}
+
 export class PlayerMirror {
     /**
      * @param {{prepare?: (raw: object) => object}} opts `prepare` turns a
@@ -155,14 +171,7 @@ export class PlayerMirror {
     }
 
     _enrich(pt) {
-        let rich;
-        if (pt.ui && typeof pt.ui === 'object') rich = { ...pt.ui };
-        else if (pt.raw && typeof pt.raw === 'object') rich = this.prepare(pt.raw);
-        else rich = fromPlayerTrack(pt);
-        rich._uid = pt.uid;
-        rich._origin = pt.origin || 'user';
-        rich.isUnavailable = !!pt.unavailable;
-        return rich;
+        return enrichPlayerTrack(pt, this.prepare);
     }
 
     _collect() {

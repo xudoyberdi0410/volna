@@ -37,3 +37,11 @@ http = "1"
 lto = "thin"
 codegen-units = 1
 strip = true
+opt-level = "s"
+
+# Hot paths stay at full speed: DSP and analysis in the player, JSON parsing.
+[profile.release.package.volna-player]
+opt-level = 3
+
+[profile.release.package.serde_json]
+opt-level = 3

@@ -128,12 +128,56 @@ void volna_core_shutdown(VolnaCore *);
   `docs/streams.md` ("JsRuntime contract"); the trait is
   `volna_streams::js::JsRuntime`, re-exported by `volna_core::js`.
 
+## The iOS app (`ios/`)
+
+A SwiftPM project built on Linux with xtool (`docs/flutter-ui-plan.md`, phase 8).
+Bundle id `uz.khudoberdi.volna`, iOS 26 or newer.
+
+| target | what | builds on |
+|---|---|---|
+| `CVolnaCore` | `include/volna_core.h` (symlink to `crates/core/include/`) + module map; links `Libs/<platform>/libvolna_core.a` | iOS, Linux |
+| `VolnaKit` | everything that is not UI: the async `Core` bridge (replies resume continuations, every string is copied and freed on receipt), Codable models of the core's JSON, typed command wrappers (`API`), the player reducer (`PlayerModel`), the platform-player bridge (`PlatformPlayerBridge` over a `MediaEngine`), JS jobs, cookies.txt export | iOS, Linux (Foundation only) |
+| `Volna` | the SwiftUI app: AVPlayer engine, lock screen, the JS web view, screens. Every file is `#if os(iOS)` | iOS |
+
+```sh
+ios/scripts/build-core.sh            # libvolna_core.a: iOS release (ffi,innertube) + Linux debug, into ios/Libs/
+cd ios && swift test                 # VolnaKit against the real core, on Linux
+VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 swift test --filter Live   # + catalog and resolver JS jobs over the network (devProxy)
+ios/scripts/xtool.sh dev build -c release --ipa   # ios/xtool/Volna.ipa (unsigned)
+ios/scripts/xtool.sh dev             # build, sign with the Apple ID, install and run on the USB-connected phone
+```
+
+`ios/scripts/xtool.sh` runs xtool in `ios/` and, when Info-ZIP `zip` is not installed,
+puts the stand-in `ios/scripts/zip` (Python `zipfile`) on `PATH`; xtool needs `zip` for
+the `.ipa`. `xtool.yml` merges `Info.plist`: `UIBackgroundModes: audio`,
+`NSAllowsLocalNetworking` (AVPlayer plays `http://127.0.0.1:<port>/…`).
+
+How the app uses the core:
+
+- Init: `dataDir` = `Application Support/Volna`, `cacheDir` = `Caches/Volna`,
+  `codec: "aac"` (AVPlayer has no Opus/WebM), `audioServer: true`. Application Support
+  is inside the app's data container, which iOS keeps when the same bundle id is
+  installed again (xtool reinstalls after the 7-day expiry); only deleting the app
+  removes it. Settings → «О приложении» shows the path.
+- Player: core commands → `PlatformPlayerBridge` → `AVEngine` (AVPlayer, `.playback`
+  audio session, `longFormAudio`); AVPlayer observations → reports, only about the latest
+  load. `MPNowPlayingInfoCenter` / `MPRemoteCommandCenter` send their buttons to the
+  same `player_*` commands.
+- JS: one hidden WKWebView (2×2 points in the window, non-persistent data store) loads an
+  HTML string with `volna_core_js_prelude()` as a document-start user script and runs
+  `volnaJs(r)` with `callAsyncJavaScript` per job; the answer goes back unchanged. When
+  iOS kills its process it is reloaded and the resolver recovers.
+- Google: sign-in in a WKWebView (default store, Safari user agent), then
+  `music.youtube.com` once, then the store's `.youtube.com`/`.google.com` cookies as
+  cookies.txt to `youtube_set_cookies`; again whenever the app comes to the foreground.
+- Yandex: the authorize page in a WKWebView, the `#access_token=` redirect is caught;
+  or paste a token / redirect URL. Then `yandex_import_start` with `browser: false`.
+
 ## Not done
 
 - The InnerTube resolver ran only against Deno + jsdom on desktop
-  (`docs/streams.md`); no Android WebView / WKWebView host exists yet.
+  (`docs/streams.md`); the iOS WKWebView host is built but not yet run on a phone.
 - On the platform player there is no crossfade, gapless handoff, EQ or
   visualizer (the output is single-deck; `player_set_dsp` is stored but not
   applied; visualizer frames are never sent). Fades jump to their target volume.
-- Release builds and app-side linking (Gradle `jniLibs`, the SwiftPM target) are
-  phases 7 and 8.
+- Android app-side linking (Gradle `jniLibs`) is phase 7.

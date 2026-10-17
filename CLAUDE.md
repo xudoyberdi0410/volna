@@ -24,6 +24,9 @@
 - `crates/scrobble` — скробблеры (Last.fm, Libre.fm, ListenBrainz, Maloja) с офлайн-очередью
   в SQLite; команды `scrobble_*` — `crates/core/src/api/scrobble.rs`. По умолчанию выключены,
   пока их скробблит старый UI.
+- `ios/` — iOS-приложение (SwiftUI, xtool на Linux) поверх `volna-core`; `VolnaKit` (мост к
+  ядру, модели, логика плеера) тестируется на Linux: `cd ios && swift test`. Сборка и
+  установка — `docs/mobile-build.md` («The iOS app»).
 - `docs/` — `STRUCTURE.md`, `hifi-api-contract.md` (формат ответов для фронта), `streams.md`.
 - `packaging/arch/PKGBUILD` — пакет pacman. Windows собирается в CI (`.github/workflows/build.yml`).
 

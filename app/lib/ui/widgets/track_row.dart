@@ -104,8 +104,7 @@ class _TrackRowState extends ConsumerState<TrackRow> {
     final width = MediaQuery.sizeOf(context).width;
     final showAlbum = widget.showAlbum && t.album != null && width >= wideRowBreakpoint;
     final subtitle = [
-      // Not on numbered album lists: YouTube marks many album entries as videos.
-      if (t.kind != TrackKind.song && widget.showCover) 'Видео',
+      if (t.kind != TrackKind.song) 'Видео',
       if (widget.trailingNote != null) widget.trailingNote!,
     ];
 

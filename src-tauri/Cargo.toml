@@ -32,7 +32,7 @@ reqwest = { workspace = true }
 mimalloc = "0.1.52"
 # Everything but the webview: state, the IPC protocol, the Yandex cookies.
 volna-daemon = { workspace = true }
-volna-streams = { workspace = true }
+volna-streams = { workspace = true, features = ["ytdlp"] }
 
 # Same version and features as wry, so the webview types match (webview_memory.rs).
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -10,6 +10,7 @@ members = [
     "crates/daemon",
     "crates/scrobble",
     "crates/lyrics",
+    "crates/core",
 ]
 # GPL-3.0 RustyPipe backend (phase 5 spike): built on its own with its own
 # Cargo.lock, never part of the app. See docs/streams.md.
@@ -24,10 +25,11 @@ rust-version = "1.90"
 [workspace.dependencies]
 volna-ytm = { path = "crates/ytm" }
 volna-net = { path = "crates/net" }
-volna-streams = { path = "crates/streams" }
+volna-streams = { path = "crates/streams", default-features = false }
 volna-wave = { path = "crates/wave" }
-volna-player = { path = "crates/player" }
+volna-player = { path = "crates/player", default-features = false }
 volna-daemon = { path = "crates/daemon" }
+volna-core = { path = "crates/core" }
 volna-scrobble = { path = "crates/scrobble" }
 volna-lyrics = { path = "crates/lyrics" }
 

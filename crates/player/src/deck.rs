@@ -1,4 +1,5 @@
-//! One `playbin3` with the Volna audio-filter bin and the system sink.
+//! The GStreamer [`Output`]: one `playbin3` per deck with the Volna
+//! audio-filter bin and the system sink.
 //!
 //! A deck lives for one continuous playback: an explicit load makes a new
 //! one (so stale bus messages are told apart by deck id) and the old one
@@ -7,43 +8,64 @@
 use std::sync::{Arc, Mutex};
 
 use gst::prelude::*;
-use tokio::sync::mpsc::UnboundedSender;
 
 use crate::analysis::Tap;
 use crate::dsp::{self, VolnaDsp};
-
-pub type DeckId = u64;
+use crate::model::DspConfig;
+use crate::output::{
+    Curve, DeckEvent, DeckId, DeckMsg, DeckSender, DeckState, NextUp, Output, OutputDeck,
+};
 
 /// souphttpsrc `timeout` (s) for the loopback audio server.
 const HTTP_TIMEOUT_S: u32 = 60;
 
-/// From GStreamer threads to the engine.
-#[derive(Debug)]
-pub enum DeckMsg {
-    Bus(DeckId, gst::Message),
-    /// `about-to-finish` handed the next URI to the deck.
-    AboutToFinish(DeckId),
+/// Decks on the system audio sink; the EQ and the master volume are shared
+/// by every deck's `volnadsp` element.
+pub struct GstOutput {
+    dsp: Arc<dsp::Shared>,
 }
 
-/// What `about-to-finish` switches to (gapless).
-#[derive(Debug, Clone)]
-pub struct NextUp {
-    pub uid: String,
-    pub uri: String,
+impl Default for GstOutput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GstOutput {
+    /// Call after [`crate::init_gstreamer`].
+    pub fn new() -> Self {
+        Self {
+            dsp: dsp::Shared::new(&DspConfig::default(), 1.0),
+        }
+    }
+}
+
+impl Output for GstOutput {
+    type Deck = Deck;
+
+    fn new_deck(
+        &self,
+        id: DeckId,
+        uri: &str,
+        preserve_pitch: bool,
+        tx: DeckSender,
+    ) -> Result<Deck, String> {
+        Deck::new(id, uri, self.dsp.clone(), preserve_pitch, tx)
+    }
+
+    fn set_dsp(&self, config: &DspConfig) {
+        self.dsp.set_config(config);
+    }
+
+    fn set_master(&self, gain: f64) {
+        self.dsp.set_master(gain);
+    }
 }
 
 pub struct Deck {
-    pub id: DeckId,
+    id: DeckId,
     playbin: gst::Element,
-    pub dsp: VolnaDsp,
-    /// The entry the listener hears (updated on gapless transitions).
-    pub uid: String,
-    /// Reached PAUSED once (`AsyncDone`).
-    pub prerolled: bool,
-    pub pending_seek: Option<f64>,
-    pub play_when_ready: bool,
-    /// A first `StreamStart` was seen.
-    pub started: bool,
+    dsp: VolnaDsp,
     next_up: Arc<Mutex<Option<NextUp>>>,
     switched_to: Arc<Mutex<Option<String>>>,
 }
@@ -119,14 +141,54 @@ fn audio_sink() -> Result<gst::Element, String> {
     Ok(sink)
 }
 
+/// A bus message as a [`DeckEvent`]; `None` for the ones the engine ignores.
+fn deck_event(msg: &gst::Message, playbin_name: &str) -> Option<DeckEvent> {
+    use gst::MessageView as V;
+    Some(match msg.view() {
+        V::Error(e) => {
+            let decode = matches!(
+                e.error().kind::<gst::StreamError>(),
+                Some(
+                    gst::StreamError::Decode
+                        | gst::StreamError::Demux
+                        | gst::StreamError::Format
+                        | gst::StreamError::TypeNotFound
+                        | gst::StreamError::WrongType
+                        | gst::StreamError::CodecNotFound
+                )
+            );
+            DeckEvent::Error {
+                message: format!("{} ({})", e.error(), e.debug().unwrap_or_default()),
+                decode,
+            }
+        }
+        V::AsyncDone(_) => DeckEvent::Prerolled,
+        V::StateChanged(s) if msg.src().is_some_and(|s| s.name() == playbin_name) => {
+            match s.current() {
+                gst::State::Playing => DeckEvent::State(DeckState::Playing),
+                gst::State::Paused => DeckEvent::State(DeckState::Paused),
+                _ => return None,
+            }
+        }
+        V::StreamStart(_) => DeckEvent::StreamStart,
+        V::Eos(_) => DeckEvent::Eos,
+        V::Buffering(b) => DeckEvent::Buffering(b.percent()),
+        V::DurationChanged(_) => DeckEvent::DurationChanged,
+        V::Warning(w) => {
+            tracing::debug!(deck = playbin_name, "gst warning: {} ({:?})", w.error(), w.debug());
+            return None;
+        }
+        _ => return None,
+    })
+}
+
 impl Deck {
-    pub fn new(
+    fn new(
         id: DeckId,
-        uid: String,
         uri: &str,
         shared: Arc<dsp::Shared>,
         preserve_pitch: bool,
-        tx: UnboundedSender<DeckMsg>,
+        tx: DeckSender,
     ) -> Result<Self, String> {
         let name = format!("volna-deck{id}");
         let playbin = gst::ElementFactory::make("playbin3")
@@ -142,23 +204,8 @@ impl Deck {
         let bus = playbin.bus().ok_or("playbin3 without a bus")?;
         let bus_tx = tx.clone();
         bus.set_sync_handler(move |_, msg| {
-            use gst::MessageView as V;
-            let forward = match msg.view() {
-                V::Eos(_)
-                | V::Error(_)
-                | V::AsyncDone(_)
-                | V::StreamStart(_)
-                | V::Buffering(_)
-                | V::DurationChanged(_) => true,
-                V::StateChanged(_) => msg.src().is_some_and(|s| s.name() == name),
-                V::Warning(w) => {
-                    tracing::debug!(deck = id, "gst warning: {} ({:?})", w.error(), w.debug());
-                    false
-                }
-                _ => false,
-            };
-            if forward {
-                let _ = bus_tx.send(DeckMsg::Bus(id, msg.clone()));
+            if let Some(event) = deck_event(msg, &name) {
+                let _ = bus_tx.send(DeckMsg { deck: id, event });
             }
             gst::BusSyncReply::Drop
         });
@@ -189,7 +236,10 @@ impl Deck {
                     if let Ok(mut s) = switched_to.lock() {
                         *s = Some(next.uid);
                     }
-                    let _ = tx.send(DeckMsg::AboutToFinish(id));
+                    let _ = tx.send(DeckMsg {
+                        deck: id,
+                        event: DeckEvent::AboutToFinish,
+                    });
                 }
                 None
             });
@@ -199,41 +249,41 @@ impl Deck {
             id,
             playbin,
             dsp,
-            uid,
-            prerolled: false,
-            pending_seek: None,
-            play_when_ready: false,
-            started: false,
             next_up,
             switched_to,
         })
     }
+}
 
-    pub fn set_state(&self, state: gst::State) {
+impl OutputDeck for Deck {
+    fn set_state(&self, state: DeckState) {
+        let state = match state {
+            DeckState::Paused => gst::State::Paused,
+            DeckState::Playing => gst::State::Playing,
+        };
         if let Err(e) = self.playbin.set_state(state) {
             tracing::warn!(deck = self.id, "cannot set {state:?}: {e}");
         }
     }
 
-    pub fn is_playing(&self) -> bool {
+    fn is_playing(&self) -> bool {
         self.playbin.current_state() == gst::State::Playing
     }
 
-    pub fn position(&self) -> Option<f64> {
+    fn position(&self) -> Option<f64> {
         self.playbin
             .query_position::<gst::ClockTime>()
             .map(|t| t.nseconds() as f64 / 1e9)
     }
 
-    pub fn duration(&self) -> Option<f64> {
+    fn duration(&self) -> Option<f64> {
         self.playbin
             .query_duration::<gst::ClockTime>()
             .map(|t| t.nseconds() as f64 / 1e9)
             .filter(|d| *d > 0.0)
     }
 
-    /// Flushing, accurate seek; also how the rate changes.
-    pub fn seek(&self, position: f64, rate: f64) -> bool {
+    fn seek(&self, position: f64, rate: f64) -> bool {
         let pos = gst::ClockTime::from_nseconds((position.max(0.0) * 1e9) as u64);
         self.playbin
             .seek(
@@ -248,18 +298,21 @@ impl Deck {
             .is_ok()
     }
 
-    pub fn set_next_up(&self, next: Option<NextUp>) {
+    fn fade(&self, from: Option<f64>, to: f64, seconds: f64, curve: Curve) {
+        self.dsp.fade(from, to, seconds, curve);
+    }
+
+    fn set_next_up(&self, next: Option<NextUp>) {
         if let Ok(mut n) = self.next_up.lock() {
             *n = next;
         }
     }
 
-    /// The uid `about-to-finish` switched to, if a gapless switch is pending.
-    pub fn take_switched(&self) -> Option<String> {
+    fn take_switched(&self) -> Option<String> {
         self.switched_to.lock().ok().and_then(|mut s| s.take())
     }
 
-    pub fn set_tap(&self, tap: Option<Arc<Tap>>) {
+    fn set_tap(&self, tap: Option<Arc<Tap>>) {
         self.dsp.set_tap(tap);
     }
 }

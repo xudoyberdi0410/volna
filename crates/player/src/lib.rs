@@ -13,11 +13,13 @@
 //! ```
 
 pub mod analysis;
+#[cfg(feature = "gstreamer")]
 mod deck;
 pub mod dsp;
 mod engine;
 pub mod hooks;
 pub mod model;
+pub mod output;
 pub mod persist;
 pub mod queue;
 pub mod tracker;
@@ -31,6 +33,10 @@ pub use hooks::{FailureInfo, Hooks, MoreRequest, PlayEventOutcome};
 pub use model::*;
 pub use queue::{Queue, QueueState, Removed};
 pub use tracker::{PlayEvent, PlayTracker};
+
+#[cfg(feature = "gstreamer")]
+pub use deck::GstOutput;
+pub use output::{Curve, DeckEvent, DeckId, DeckMsg, DeckSender, DeckState, NextUp, Output, OutputDeck};
 
 use engine::{Command, Engine};
 
@@ -95,6 +101,7 @@ pub enum PlayerEvent {
 }
 
 /// Registers `volnadsp` and initialises GStreamer. Call once, early.
+#[cfg(feature = "gstreamer")]
 pub fn init_gstreamer() -> Result<(), String> {
     gst::init().map_err(|e| format!("GStreamer: {e}"))?;
     dsp::register().map_err(|e| format!("volnadsp: {e}"))?;
@@ -118,10 +125,20 @@ pub fn init_gstreamer() -> Result<(), String> {
 pub struct Player;
 
 impl Player {
-    /// Starts the actor on the current tokio runtime, restoring the saved
-    /// queue (paused) and settings from `paths`.
+    /// Starts the actor on the current tokio runtime with GStreamer output,
+    /// restoring the saved queue (paused) and settings from `paths`.
+    #[cfg(feature = "gstreamer")]
     pub fn spawn<H: Hooks>(hooks: H, paths: persist::Paths) -> PlayerHandle {
-        let ch = Engine::spawn(hooks, paths);
+        Self::spawn_with(hooks, GstOutput::new(), paths)
+    }
+
+    /// [`Player::spawn`] on any [`Output`] (a platform player on mobile).
+    pub fn spawn_with<H: Hooks, O: Output>(
+        hooks: H,
+        output: O,
+        paths: persist::Paths,
+    ) -> PlayerHandle {
+        let ch = Engine::spawn(hooks, output, paths);
         PlayerHandle {
             cmd: ch.cmd,
             events: ch.events,

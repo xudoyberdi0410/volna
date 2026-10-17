@@ -1,0 +1,3 @@
+tags:
+  # Screenshot tests (test/goldens/*.png).
+  golden:

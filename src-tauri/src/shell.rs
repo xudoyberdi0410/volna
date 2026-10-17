@@ -156,8 +156,8 @@ fn local_state() -> anyhow::Result<crate::AppState> {
     let dirs = volna_daemon::daemon::Dirs::new()?;
     let state = crate::AppState::new(&dirs.cache)?;
     let settings = volna_daemon::settings::SettingsStore::new(&dirs.config).load();
-    if let (Ok(settings), Some(streams)) = (settings, &state.streams)
-        && let Err(e) = streams.backend().set_cookies(settings.ytdlp_cookies)
+    if let (Ok(settings), Some(ytdlp)) = (settings, state.ytdlp())
+        && let Err(e) = ytdlp.set_cookies(settings.ytdlp_cookies)
     {
         tracing::warn!("yt-dlp cookies for the Yandex sign-in: {e}");
     }

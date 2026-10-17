@@ -22,9 +22,8 @@ async fn live_state() -> AppState {
             .await
             .expect("VOLNA_TEST_PROXY");
     }
-    if let (Ok(browser), Some(streams)) = (std::env::var("VOLNA_TEST_COOKIES"), &state.streams) {
-        streams
-            .backend()
+    if let (Ok(browser), Some(ytdlp)) = (std::env::var("VOLNA_TEST_COOKIES"), state.ytdlp()) {
+        ytdlp
             .set_cookies(volna_streams::Cookies::Browser(browser))
             .expect("VOLNA_TEST_COOKIES");
     }

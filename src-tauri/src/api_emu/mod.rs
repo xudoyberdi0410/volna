@@ -16,7 +16,7 @@ mod endpoints;
 #[cfg(test)]
 mod live;
 mod proxy;
-pub mod shape;
+pub use volna_core::shape;
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -139,10 +139,10 @@ pub struct ApiEmu {
 }
 
 impl ApiEmu {
-    pub fn new(net: Arc<NetManager>) -> Self {
+    pub fn new(net: Arc<NetManager>, ytm: YtmClient) -> Self {
         let min = |m: u64| Duration::from_secs(60 * m);
         Self {
-            ytm: YtmClient::new(net.client()),
+            ytm,
             net,
             responses: TtlCache::with_budget(512, min(10), RESPONSE_CACHE_BYTES, |b| b.len()),
             artists: TtlCache::new(128, min(15)),

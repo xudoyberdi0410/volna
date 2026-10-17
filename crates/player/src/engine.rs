@@ -9,8 +9,9 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::analysis::{Analyzer, Tap};
-use crate::deck::{Deck, DeckId, DeckMsg, NextUp};
-use crate::dsp::{self, Curve};
+use crate::output::{
+    Curve, DeckEvent, DeckId, DeckMsg, DeckState, NextUp, Output, OutputDeck,
+};
 use crate::hooks::{FailureInfo, Hooks, MoreRequest};
 use crate::model::*;
 use crate::persist::{
@@ -211,7 +212,57 @@ struct Vis {
     task: tokio::task::JoinHandle<()>,
 }
 
-pub struct Engine<H: Hooks> {
+/// An output deck plus what the engine tracks about it.
+struct Deck<D> {
+    id: DeckId,
+    /// The entry the listener hears (updated on gapless transitions).
+    uid: String,
+    /// Reached PAUSED once.
+    prerolled: bool,
+    pending_seek: Option<f64>,
+    play_when_ready: bool,
+    /// A first `StreamStart` was seen.
+    started: bool,
+    io: D,
+}
+
+impl<D: OutputDeck> Deck<D> {
+    /// Starts loading; the output may take the pending seek as its start.
+    fn preroll(&mut self) {
+        if self.io.preroll(self.pending_seek) {
+            self.pending_seek = None;
+        }
+    }
+    fn set_state(&self, state: DeckState) {
+        self.io.set_state(state);
+    }
+    fn is_playing(&self) -> bool {
+        self.io.is_playing()
+    }
+    fn position(&self) -> Option<f64> {
+        self.io.position()
+    }
+    fn duration(&self) -> Option<f64> {
+        self.io.duration()
+    }
+    fn seek(&self, position: f64, rate: f64) -> bool {
+        self.io.seek(position, rate)
+    }
+    fn fade(&self, from: Option<f64>, to: f64, seconds: f64, curve: Curve) {
+        self.io.fade(from, to, seconds, curve);
+    }
+    fn set_next_up(&self, next: Option<NextUp>) {
+        self.io.set_next_up(next);
+    }
+    fn take_switched(&self) -> Option<String> {
+        self.io.take_switched()
+    }
+    fn set_tap(&self, tap: Option<Arc<Tap>>) {
+        self.io.set_tap(tap);
+    }
+}
+
+pub struct Engine<H: Hooks, O: Output> {
     hooks: Arc<H>,
     paths: Paths,
     input_tx: mpsc::UnboundedSender<Input>,
@@ -223,13 +274,13 @@ pub struct Engine<H: Hooks> {
     cont: Cont,
     settings: PlayerSettings,
     dsp_config: DspConfig,
-    dsp: Arc<dsp::Shared>,
+    output: O,
     state: PlaybackState,
     published: Option<PlaybackState>,
     want_play: bool,
-    active: Option<Deck>,
-    standby: Option<Deck>,
-    retiring: Vec<Deck>,
+    active: Option<Deck<O::Deck>>,
+    standby: Option<Deck<O::Deck>>,
+    retiring: Vec<Deck<O::Deck>>,
     next_deck: DeckId,
     pause_gen: u64,
     tracker: PlayTracker,
@@ -276,8 +327,8 @@ pub(crate) struct Channels {
     pub cmd: mpsc::UnboundedSender<Command>,
 }
 
-impl<H: Hooks> Engine<H> {
-    pub(crate) fn spawn(hooks: H, paths: Paths) -> Channels {
+impl<H: Hooks, O: Output> Engine<H, O> {
+    pub(crate) fn spawn(hooks: H, output: O, paths: Paths) -> Channels {
         let persisted = Persisted::load(&paths);
         let hooks = Arc::new(hooks);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -299,7 +350,8 @@ impl<H: Hooks> Engine<H> {
                 },
         } = persisted;
         let queue = Queue::from_state(saved.queue);
-        let dsp = dsp::Shared::new(&dsp_config, settings.master_gain());
+        output.set_dsp(&dsp_config);
+        output.set_master(settings.master_gain());
         let mut engine = Engine {
             hooks,
             paths,
@@ -325,7 +377,7 @@ impl<H: Hooks> Engine<H> {
             },
             settings,
             dsp_config,
-            dsp,
+            output,
             published: None,
             want_play: false,
             active: None,
@@ -514,31 +566,40 @@ impl<H: Hooks> Engine<H> {
 
     // ---- decks ---------------------------------------------------------------
 
-    fn new_deck(&mut self, track: &PlayerTrack) -> Result<Deck, (ErrorKind, String)> {
+    fn new_deck(&mut self, track: &PlayerTrack) -> Result<Deck<O::Deck>, (ErrorKind, String)> {
         let uri = self.hooks.stream_uri(track, self.quality()).ok_or((
             ErrorKind::NoYtDlp,
             "playback is unavailable (no yt-dlp or audio server)".to_owned(),
         ))?;
         let id = self.next_deck;
         self.next_deck += 1;
-        let deck = Deck::new(
+        let io = self
+            .output
+            .new_deck(
+                id,
+                &uri,
+                self.settings.preserve_pitch,
+                self.deck_tx.clone(),
+            )
+            .map_err(|e| (ErrorKind::Other, e))?;
+        let deck = Deck {
             id,
-            track.uid.clone(),
-            &uri,
-            self.dsp.clone(),
-            self.settings.preserve_pitch,
-            self.deck_tx.clone(),
-        )
-        .map_err(|e| (ErrorKind::Other, e))?;
+            uid: track.uid.clone(),
+            prerolled: false,
+            pending_seek: None,
+            play_when_ready: false,
+            started: false,
+            io,
+        };
         tracing::debug!(deck = id, uid = %track.uid, id = %track.id, "deck created");
         Ok(deck)
     }
 
     /// Fades a deck out (de-click) and drops it shortly after.
-    fn retire(&mut self, deck: Deck, declick: bool) {
+    fn retire(&mut self, deck: Deck<O::Deck>, declick: bool) {
         deck.set_tap(None);
         if declick && deck.prerolled && deck.is_playing() {
-            deck.dsp.fade(None, 0.0, DECLICK_S, Curve::Linear);
+            deck.fade(None, 0.0, DECLICK_S, Curve::Linear);
             deck.set_next_up(None);
             self.after(PAUSE_DELAY, Timer::Retire(deck.id));
             self.retiring.push(deck);
@@ -568,7 +629,10 @@ impl<H: Hooks> Engine<H> {
         let Some(deck) = &self.active else {
             return;
         };
-        let next = if !self.settings.gapless || self.settings.crossfade.enabled {
+        let next = if !self.settings.gapless
+            || self.settings.crossfade.enabled
+            || self.output.single_deck()
+        {
             None
         } else if self.queue.repeat == Repeat::One {
             self.queue.current().cloned()
@@ -646,9 +710,9 @@ impl<H: Hooks> Engine<H> {
         if let Some(sb) = standby {
             if sb.uid == t.uid && sb.prerolled && position == 0.0 {
                 tracing::debug!(deck = sb.id, "promoting the prerolled standby deck");
-                sb.dsp.fade(Some(1.0), 1.0, 0.0, Curve::Linear);
+                sb.fade(Some(1.0), 1.0, 0.0, Curve::Linear);
                 if play {
-                    sb.set_state(gst::State::Playing);
+                    sb.set_state(DeckState::Playing);
                 }
                 self.state.status = if play {
                     Status::Loading
@@ -666,7 +730,7 @@ impl<H: Hooks> Engine<H> {
             Ok(mut deck) => {
                 deck.pending_seek = (position > 0.0).then_some(position);
                 deck.play_when_ready = play;
-                deck.set_state(gst::State::Paused);
+                deck.preroll();
                 self.after(PREROLL_TIMEOUT, Timer::Preroll(deck.id));
                 self.active = Some(deck);
                 self.state.status = if play {
@@ -733,8 +797,8 @@ impl<H: Hooks> Engine<H> {
             self.want_play = true;
             self.pause_gen += 1;
             if d.prerolled {
-                d.dsp.fade(None, 1.0, DECLICK_S, Curve::Linear);
-                d.set_state(gst::State::Playing);
+                d.fade(None, 1.0, DECLICK_S, Curve::Linear);
+                d.set_state(DeckState::Playing);
             } else {
                 d.play_when_ready = true;
                 self.state.status = Status::Loading;
@@ -757,7 +821,7 @@ impl<H: Hooks> Engine<H> {
         let mut pause_deck = None;
         if let Some(d) = &mut self.active {
             if d.prerolled {
-                d.dsp.fade(None, 0.0, DECLICK_S, Curve::Linear);
+                d.fade(None, 0.0, DECLICK_S, Curve::Linear);
                 pause_deck = Some(d.id);
             } else {
                 d.play_when_ready = false;
@@ -1133,7 +1197,11 @@ impl<H: Hooks> Engine<H> {
 
     fn crossfade_check(&mut self, pos: f64) {
         let cf = self.settings.crossfade;
-        if !cf.enabled || self.state.crossfading || self.queue.repeat == Repeat::One {
+        if !cf.enabled
+            || self.state.crossfading
+            || self.queue.repeat == Repeat::One
+            || self.output.single_deck()
+        {
             if let Some(d) = self.standby.take() {
                 self.retire(d, false);
             }
@@ -1163,8 +1231,8 @@ impl<H: Hooks> Engine<H> {
             return;
         }
         if self.standby.is_none() && remaining <= cf.seconds + CROSSFADE_LEAD_S && remaining > 1.0 {
-            if let Ok(deck) = self.new_deck(&next) {
-                deck.set_state(gst::State::Paused);
+            if let Ok(mut deck) = self.new_deck(&next) {
+                deck.preroll();
                 self.standby = Some(deck);
             }
             return;
@@ -1194,9 +1262,9 @@ impl<H: Hooks> Engine<H> {
         tracing::debug!(from = old.id, to = new.id, seconds, "crossfade");
         old.set_next_up(None);
         old.set_tap(None);
-        old.dsp.fade(None, 0.0, seconds, Curve::EqualPowerOut);
-        new.dsp.fade(Some(0.0), 1.0, seconds, Curve::EqualPowerIn);
-        new.set_state(gst::State::Playing);
+        old.fade(None, 0.0, seconds, Curve::EqualPowerOut);
+        new.fade(Some(0.0), 1.0, seconds, Curve::EqualPowerIn);
+        new.set_state(DeckState::Playing);
         if let Some(uid) = self.state.uid.clone() {
             let evs = self.tracker.ended(&uid, now_ms());
             self.play_events(evs);
@@ -1266,47 +1334,29 @@ impl<H: Hooks> Engine<H> {
     }
 
     fn deck_msg(&mut self, msg: DeckMsg) {
-        let (id, msg) = match msg {
-            DeckMsg::AboutToFinish(id) => {
-                tracing::debug!(deck = id, "about-to-finish: next uri set");
-                return;
-            }
-            DeckMsg::Bus(id, msg) => (id, msg),
-        };
-        use gst::MessageView as V;
+        let DeckMsg { deck: id, event } = msg;
         let is_active = self.active.as_ref().is_some_and(|d| d.id == id);
         let is_standby = self.standby.as_ref().is_some_and(|d| d.id == id);
-        match msg.view() {
-            V::Error(e) => {
-                let decode = matches!(
-                    e.error().kind::<gst::StreamError>(),
-                    Some(
-                        gst::StreamError::Decode
-                            | gst::StreamError::Demux
-                            | gst::StreamError::Format
-                            | gst::StreamError::TypeNotFound
-                            | gst::StreamError::WrongType
-                            | gst::StreamError::CodecNotFound
-                    )
-                );
-                let message = format!("{} ({})", e.error(), e.debug().unwrap_or_default());
-                self.on_deck_error(id, message, decode);
+        match event {
+            DeckEvent::AboutToFinish => {
+                tracing::debug!(deck = id, "about-to-finish: next uri set");
             }
-            V::AsyncDone(_) if is_standby => {
+            DeckEvent::Error { message, decode } => self.on_deck_error(id, message, decode),
+            DeckEvent::Prerolled if is_standby => {
                 if let Some(d) = &mut self.standby {
                     d.prerolled = true;
                 }
             }
-            V::AsyncDone(_) if is_active => self.on_prerolled(),
-            V::StateChanged(s) if is_active => {
-                if s.current() == gst::State::Playing && self.want_play {
+            DeckEvent::Prerolled if is_active => self.on_prerolled(),
+            DeckEvent::State(s) if is_active => {
+                if s == DeckState::Playing && self.want_play {
                     if self.state.status != Status::Playing {
                         self.state.status = Status::Playing;
                         self.sample_position();
                         self.publish_state();
                         self.emit_position();
                     }
-                } else if s.current() == gst::State::Paused
+                } else if s == DeckState::Paused
                     && !self.want_play
                     && self.state.status == Status::Playing
                 {
@@ -1314,14 +1364,14 @@ impl<H: Hooks> Engine<H> {
                     self.publish_state();
                 }
             }
-            V::StreamStart(_) if is_active => self.on_stream_start(),
-            V::Eos(_) if is_active => {
+            DeckEvent::StreamStart if is_active => self.on_stream_start(),
+            DeckEvent::Eos if is_active => {
                 tracing::debug!(deck = id, "end of stream");
                 self.natural_end();
             }
-            V::Eos(_) => self.retiring.retain(|d| d.id != id),
-            V::Buffering(b) if is_active => self.on_buffering(b.percent()),
-            V::DurationChanged(_) if is_active => {
+            DeckEvent::Eos => self.retiring.retain(|d| d.id != id),
+            DeckEvent::Buffering(percent) if is_active => self.on_buffering(percent),
+            DeckEvent::DurationChanged if is_active => {
                 if let Some(d) = self.active.as_ref().and_then(Deck::duration) {
                     self.state.duration = Some(d);
                     self.publish_state();
@@ -1348,8 +1398,8 @@ impl<H: Hooks> Engine<H> {
             self.state.duration = Some(dur);
         }
         if d.play_when_ready && self.want_play {
-            d.dsp.fade(Some(0.0), 1.0, DECLICK_S, Curve::Linear);
-            d.set_state(gst::State::Playing);
+            d.fade(Some(0.0), 1.0, DECLICK_S, Curve::Linear);
+            d.set_state(DeckState::Playing);
         } else if self.state.status == Status::Loading {
             self.state.status = Status::Paused;
         }
@@ -1398,9 +1448,9 @@ impl<H: Hooks> Engine<H> {
             && self.want_play
         {
             d.set_state(if buffering {
-                gst::State::Paused
+                DeckState::Paused
             } else {
-                gst::State::Playing
+                DeckState::Playing
             });
         }
         self.publish_state();
@@ -1467,7 +1517,7 @@ impl<H: Hooks> Engine<H> {
                     && let Some(d) = &self.active
                     && d.id == id
                 {
-                    d.set_state(gst::State::Paused);
+                    d.set_state(DeckState::Paused);
                 }
             }
             Timer::Retire(id) | Timer::CrossfadeDone(id) => {
@@ -1493,7 +1543,7 @@ impl<H: Hooks> Engine<H> {
                     if let Some(d) = &self.active
                         && self.want_play
                     {
-                        d.dsp.fade(None, 0.0, SLEEP_FADE_S, Curve::Linear);
+                        d.fade(None, 0.0, SLEEP_FADE_S, Curve::Linear);
                         self.after(
                             Duration::from_secs_f64(SLEEP_FADE_S + 0.2),
                             Timer::SleepFadeDone(epoch),
@@ -1776,7 +1826,7 @@ impl<H: Hooks> Engine<H> {
             }
             Command::SetDsp { config, reply } => {
                 self.dsp_config = config.sanitized();
-                self.dsp.set_config(&self.dsp_config);
+                self.output.set_dsp(&self.dsp_config);
                 self.save_settings();
                 self.emit(PlayerEvent::Settings {
                     settings: self.settings.clone(),
@@ -1930,7 +1980,7 @@ impl<H: Hooks> Engine<H> {
     fn apply_settings(&mut self, new: PlayerSettings, external: bool) {
         let old = std::mem::replace(&mut self.settings, new);
         let s = &self.settings;
-        self.dsp.set_master(s.master_gain());
+        self.output.set_master(s.master_gain());
         self.state.volume = s.volume;
         self.state.muted = s.muted;
         self.state.rate = s.speed;

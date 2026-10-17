@@ -6,6 +6,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "web_login.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -97,6 +98,8 @@ static void my_application_activate(GApplication* application) {
                                             nullptr);
   g_object_set_data_full(G_OBJECT(window), "volna-window-channel", channel,
                          g_object_unref);
+  web_login_register(fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+                     window);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

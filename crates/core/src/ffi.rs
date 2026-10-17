@@ -32,13 +32,11 @@ use crate::player::platform::{CommandPlayer, PlatformOutput, PlayerReport};
 /// otherwise a JSON string with the error (`"<kind>: <message>"`).
 pub type VolnaReplyCallback =
     Option<extern "C" fn(user_data: *mut c_void, id: u64, ok: bool, json: *mut c_char)>;
-type ReplyFn =
-    extern "C" fn(user_data: *mut c_void, id: u64, ok: bool, json: *mut c_char);
+type ReplyFn = extern "C" fn(user_data: *mut c_void, id: u64, ok: bool, json: *mut c_char);
 /// An event (`player:state`, `library:changed`, …) with its JSON payload.
 pub type VolnaEventCallback =
     Option<extern "C" fn(user_data: *mut c_void, name: *mut c_char, payload_json: *mut c_char)>;
-type EventFn =
-    extern "C" fn(user_data: *mut c_void, name: *mut c_char, payload_json: *mut c_char);
+type EventFn = extern "C" fn(user_data: *mut c_void, name: *mut c_char, payload_json: *mut c_char);
 /// The response to [`volna_core_proto`] `id`: HTTP status, headers as a
 /// JSON array of `[name, value]` pairs, and the body.
 pub type VolnaProtoCallback = Option<
@@ -66,8 +64,12 @@ type ProtoFn = extern "C" fn(
 pub type VolnaPlayerCallback =
     Option<extern "C" fn(user_data: *mut c_void, command_json: *mut c_char)>;
 type PlayerFn = extern "C" fn(user_data: *mut c_void, command_json: *mut c_char);
-/// A JavaScript job for the platform's engine (WebView), by convention
-/// `{"script":…,"args":…}`. Answer with [`volna_core_js_result`].
+/// A JavaScript job for the platform's engine (WebView): `request_json` is
+/// a `JsRequest` (docs/streams.md, "JsRuntime contract"). Evaluate
+/// `volnaJs(<request_json>)` in a context where [`volna_core_js_prelude`] is
+/// loaded and answer with the string it resolves to through
+/// [`volna_core_js_result`]. Free `request_json` with
+/// [`volna_core_free_string`].
 pub type VolnaJsCallback =
     Option<extern "C" fn(user_data: *mut c_void, request_id: u64, request_json: *mut c_char)>;
 
@@ -156,7 +158,11 @@ impl EventSink for FfiEvents {
     }
     fn emit(&self, name: &str, payload: Value) {
         if let Some(cb) = get(&self.0) {
-            (cb.f)(cb.user(), c_string(name.to_owned()), c_string(payload.to_string()));
+            (cb.f)(
+                cb.user(),
+                c_string(name.to_owned()),
+                c_string(payload.to_string()),
+            );
         }
     }
 }
@@ -185,6 +191,12 @@ struct InitConfig {
     /// Ignored in release builds; mobile networking is direct.
     #[serde(default)]
     dev_proxy: Option<String>,
+    /// The signed-in YouTube session for stream resolution, as a Netscape
+    /// cookies.txt (from the login WebView's cookie store). Without it
+    /// YouTube often answers with its bot check.
+    #[cfg_attr(not(feature = "innertube"), allow(dead_code))]
+    #[serde(default)]
+    youtube_cookies: Option<String>,
 }
 
 fn yes() -> bool {
@@ -201,8 +213,10 @@ fn fail(e: impl std::fmt::Display) -> *mut VolnaCore {
 }
 
 /// Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-/// "audioServer": true?, "log": "info"?, "codec": "aac"?, "devProxy": "…"?}`
-/// (`devProxy`: debug builds only). Returns NULL on failure; the
+/// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?,
+/// "codec": "aac"?, "devProxy": "…"?}` (`devProxy`: debug builds only).
+/// With feature `innertube` the core resolves streams itself and runs their
+/// JavaScript through [`volna_core_set_js_callback`]. Returns NULL on failure; the
 /// reason is then in [`volna_core_last_error`] on the same thread.
 ///
 /// # Safety
@@ -233,12 +247,13 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
     };
     let output = PlatformOutput::new();
     let js = CallbackJs::new();
+    let dirs = Dirs::under(config.data_dir, config.cache_dir);
+    let backend = stream_backend(&js, &dirs, config.youtube_cookies.as_deref());
     let core_config = CoreConfig {
-        dirs: Dirs::under(config.data_dir, config.cache_dir),
+        dirs,
         proxy: false,
         audio_server: config.audio_server,
-        // The mobile stream resolver plugs in here, built with `js`.
-        backend: None,
+        backend,
         codec: volna_streams::Codec::from_param(config.codec.as_deref()),
     };
     let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -379,9 +394,10 @@ pub unsafe extern "C" fn volna_core_set_js_callback(
         return;
     };
     let user = user_data as usize;
-    h.js.set_sender(callback.map(|f| {
-        move |id: u64, request: String| f(user as *mut c_void, id, c_string(request))
-    }));
+    h.js.set_sender(
+        callback
+            .map(|f| move |id: u64, request: String| f(user as *mut c_void, id, c_string(request))),
+    );
 }
 
 /// Runs command `cmd` with `args_json` (NULL: no args); the reply comes
@@ -457,7 +473,14 @@ pub unsafe extern "C" fn volna_core_proto(handle: *mut VolnaCore, id: u64, uri: 
         let body = body.into_boxed_slice();
         let len = body.len();
         let ptr = Box::into_raw(body).cast::<u8>();
-        (cb.f)(cb.user(), id, parts.status.as_u16(), c_string(headers), ptr, len);
+        (cb.f)(
+            cb.user(),
+            id,
+            parts.status.as_u16(),
+            c_string(headers),
+            ptr,
+            len,
+        );
     });
 }
 
@@ -474,8 +497,9 @@ pub unsafe extern "C" fn volna_core_player_report(
     event_json: *const c_char,
 ) -> bool {
     // SAFETY: forwarded from the caller.
-    let (Some(h), Some(json)) = (unsafe { self::handle(handle) }, unsafe { borrowed(event_json) })
-    else {
+    let (Some(h), Some(json)) = (unsafe { self::handle(handle) }, unsafe {
+        borrowed(event_json)
+    }) else {
         return false;
     };
     match serde_json::from_str::<PlayerReport>(json) {
@@ -490,9 +514,9 @@ pub unsafe extern "C" fn volna_core_player_report(
     }
 }
 
-/// The answer to JS job `request_id`: `result_json` is the script's JSON
-/// result when `ok`, an error message otherwise. False when nothing waits
-/// for that id.
+/// The answer to JS job `request_id`: when `ok`, `result_json` is the
+/// string `volnaJs` resolved to, unchanged; otherwise why the job could not
+/// run (no WebView, page gone). False when nothing waits for that id.
 ///
 /// # Safety
 /// `handle` is a live handle; `result_json` is NULL or a valid string.
@@ -510,6 +534,48 @@ pub unsafe extern "C" fn volna_core_js_result(
     // SAFETY: forwarded from the caller.
     let json = unsafe { borrowed(result_json) }.unwrap_or("null");
     h.js.complete(request_id, ok, json)
+}
+
+/// The script the platform's JS context loads once before any JS job
+/// (`volnaJs` and the challenge solver). Owned by the library: do not free.
+#[unsafe(no_mangle)]
+pub extern "C" fn volna_core_js_prelude() -> *const c_char {
+    static PRELUDE: std::sync::OnceLock<std::ffi::CString> = std::sync::OnceLock::new();
+    PRELUDE
+        .get_or_init(|| {
+            std::ffi::CString::new(crate::js::PRELUDE).expect("the prelude has no NUL bytes")
+        })
+        .as_ptr()
+}
+
+/// The mobile stream resolver: InnerTube with its JavaScript run by the
+/// platform through `js` (feature `innertube`). Without the feature there
+/// is no backend and playback reports an error.
+#[cfg(feature = "innertube")]
+fn stream_backend(
+    js: &Arc<CallbackJs>,
+    dirs: &Dirs,
+    cookies: Option<&str>,
+) -> Option<crate::StreamBackend> {
+    use volna_streams::innertube::{CookieJar, InnerTube, InnerTubeOptions};
+    let backend = InnerTube::new(
+        js.clone(),
+        InnerTubeOptions {
+            cache_dir: Some(dirs.cache.join("players")),
+            ..Default::default()
+        },
+    );
+    backend.set_cookies(cookies.map(CookieJar::from_netscape));
+    Some(crate::StreamBackend::injected(backend))
+}
+
+#[cfg(not(feature = "innertube"))]
+fn stream_backend(
+    _js: &Arc<CallbackJs>,
+    _dirs: &Dirs,
+    _cookies: Option<&str>,
+) -> Option<crate::StreamBackend> {
+    None
 }
 
 /// Frees a string the core handed out.
@@ -560,7 +626,6 @@ pub unsafe extern "C" fn volna_core_shutdown(handle: *mut VolnaCore) {
     }
     h.output.set_player(None);
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -673,9 +738,8 @@ mod tests {
         }
 
         let dir = tempfile::tempdir().unwrap();
-        let config = cstr(
-            &serde_json::json!({ "dataDir": dir.path(), "audioServer": false }).to_string(),
-        );
+        let config =
+            cstr(&serde_json::json!({ "dataDir": dir.path(), "audioServer": false }).to_string());
         let (s, rx) = mpsc::channel();
         let user = Box::into_raw(Box::new(Mutex::new(s))) as *mut c_void;
         // SAFETY: as above; `user` outlives the handle.
@@ -720,7 +784,13 @@ mod tests {
             match wait(&rx, |g| matches!(g, Got::Proto(7, ..))) {
                 Got::Proto(_, status, headers, body) => {
                     assert_eq!(status, 400);
-                    assert!(headers.as_array().unwrap().iter().any(|p| p[0] == "content-type"));
+                    assert!(
+                        headers
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|p| p[0] == "content-type")
+                    );
                     let v: Value = serde_json::from_slice(&body).unwrap();
                     assert_eq!(v["status"], 400);
                 }
@@ -730,9 +800,8 @@ mod tests {
             // The platform player: a queue loads the first track through it,
             // and its reports move the engine (events come back).
             let set_queue = cstr("player_set_queue");
-            let q = cstr(
-                r#"{"tracks":[{"id":"dQw4w9WgXcQ","title":"A"}],"startIndex":0,"play":true}"#,
-            );
+            let q =
+                cstr(r#"{"tracks":[{"id":"dQw4w9WgXcQ","title":"A"}],"startIndex":0,"play":true}"#);
             volna_core_call(h, 4, set_queue.as_ptr(), q.as_ptr());
             // No stream backend here, so the engine reports the failure as
             // an event instead of loading (it may come before the reply).

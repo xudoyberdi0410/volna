@@ -1,5 +1,6 @@
-/// Against a running daemon (`cargo run -p volna-daemon -- --tray`), skipped
-/// when its socket is absent: search → album → one cover through `volna://img`.
+/// Against a running daemon (`cargo run -p volna-daemon -- --tray`), only with
+/// `VOLNA_LIVE=1` and its socket present: search → album → one cover through
+/// `volna://img`.
 library;
 
 import 'dart:io';
@@ -13,9 +14,12 @@ import 'package:volna/ipc/transport.dart';
 
 void main() {
   final path = socketPath();
-  final running = Platform.isWindows
-      ? File(portFilePath(path)).existsSync()
-      : FileSystemEntity.typeSync(path) == FileSystemEntityType.unixDomainSock;
+  // Opt-in, so a plain `flutter test` never talks to the user's own daemon.
+  final live = Platform.environment['VOLNA_LIVE'] == '1';
+  final running = live &&
+      (Platform.isWindows
+          ? File(portFilePath(path)).existsSync()
+          : FileSystemEntity.typeSync(path) == FileSystemEntityType.unixDomainSock);
 
   test('search → album → cover', () async {
     final t = SocketTransport()..start();
@@ -50,5 +54,5 @@ void main() {
       isTrue,
       reason: 'not an image: ${bytes.take(8).toList()}',
     );
-  }, skip: running ? false : 'no daemon socket at $path', timeout: const Timeout(Duration(minutes: 5)));
+  }, skip: running ? false : 'set VOLNA_LIVE=1 with a daemon socket at $path', timeout: const Timeout(Duration(minutes: 5)));
 }

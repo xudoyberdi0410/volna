@@ -12,11 +12,13 @@ checked on 2026-10-17.
 |---|---|---|
 | `ytdlp` | yes | stream resolution, cookies and the Yandex browser session through yt-dlp (desktop) |
 | `ffi` | yes | the C ABI |
+| `innertube` | no | in-process stream resolution (volna-streams InnerTube); its JavaScript runs in the platform WebView through the JS callback |
 
-Mobile builds use `--no-default-features --features ffi`. The stream backend is
-injected at init (`CoreConfig::backend`, `StreamBackend::injected`); the mobile
-InnerTube resolver is not written yet, so on mobile `backend` is `None` for now
-and playback answers `no_ytdlp` (see "Not done").
+Mobile builds use `--no-default-features --features ffi,innertube`. The stream
+backend is injected at init (`CoreConfig::backend`, `StreamBackend::injected`):
+with `innertube`, `volna_core_init` builds `volna_streams::innertube::InnerTube`
+over the FFI JS callback (players cached in `<cacheDir>/players`, cookies from
+`youtubeCookies`). Without it `backend` is `None` and playback answers `no_ytdlp`.
 
 `volna-player` builds without GStreamer when its `gstreamer` feature is off,
 and `volna-streams` without yt-dlp when its `ytdlp` feature is off; both are
@@ -45,7 +47,7 @@ scripts/build-core-mobile.sh header                # regenerate include/volna_co
 ```
 
 Android is plain `cargo ndk -t arm64-v8a -t x86_64 build -p volna-core
---no-default-features --features ffi`. The `.so` needs only `libc`, `libm`, `libdl`.
+--no-default-features --features ffi,innertube`. The `.so` needs only `libc`, `libm`, `libdl`.
 
 iOS, spelled out (what the script sets):
 
@@ -61,7 +63,7 @@ export CARGO_TARGET_AARCH64_APPLE_IOS_RUSTFLAGS="-C link-arg=--target=arm64-appl
   -C link-arg=-L$SDK/usr/lib -C link-arg=-lSystem -C link-arg=-F$SDK/System/Library/Frameworks \
   -C link-arg=-framework -C link-arg=Security -C link-arg=-framework -C link-arg=CoreFoundation \
   -C link-arg=-framework -C link-arg=SystemConfiguration"
-cargo build -p volna-core --no-default-features --features ffi --target aarch64-apple-ios
+cargo build -p volna-core --no-default-features --features ffi,innertube --target aarch64-apple-ios
 ```
 
 The linker settings only matter for the `.dylib` the crate type list also
@@ -78,7 +80,7 @@ targets with the host clang / the NDK clang.
 ## The C ABI in short
 
 ```c
-VolnaCore *volna_core_init(const char *config_json); // {"dataDir":…,"cacheDir"?,"audioServer"?,"log"?,"codec"?,"devProxy"?}; NULL → volna_core_last_error()
+VolnaCore *volna_core_init(const char *config_json); // {"dataDir":…,"cacheDir"?,"audioServer"?,"log"?,"youtubeCookies"?,"codec"?,"devProxy"?}; NULL → volna_core_last_error()
 void volna_core_set_reply_callback(VolnaCore *, VolnaReplyCallback, void *user_data);   // (user, id, ok, json)
 void volna_core_set_event_callback(VolnaCore *, VolnaEventCallback, void *user_data);   // (user, name, payload_json)
 void volna_core_set_proto_callback(VolnaCore *, VolnaProtoCallback, void *user_data);   // (user, id, status, headers_json, body, len)
@@ -88,6 +90,7 @@ void volna_core_call(VolnaCore *, uint64_t id, const char *cmd, const char *args
 void volna_core_proto(VolnaCore *, uint64_t id, const char *uri);
 bool volna_core_player_report(VolnaCore *, const char *event_json);
 bool volna_core_js_result(VolnaCore *, uint64_t request_id, bool ok, const char *result_json);
+const char *volna_core_js_prelude(void);                                               // static, do not free
 void volna_core_free_string(char *);
 void volna_core_free_bytes(uint8_t *, size_t);
 void volna_core_shutdown(VolnaCore *);
@@ -112,15 +115,19 @@ void volna_core_shutdown(VolnaCore *);
   every few hundred ms while playing, `{"type":"buffering","on"}`, `ended`,
   `{"type":"error","message","decode"?}`. Reports are about the latest load.
   The core sends `stop` before loading the next item.
-- JS jobs (for the mobile stream resolver): `request_json` is
-  `{"script":…,"args":…}`; answer with the script's JSON result, or `ok=false`
-  and an error message.
+- JS jobs (for the mobile stream resolver): load `volna_core_js_prelude()` once
+  into a WebView page that stays alive (BotGuard needs a real DOM); then for each
+  job evaluate `volnaJs(<request_json>)` and pass the string it resolves to,
+  unchanged, to `volna_core_js_result(…, ok=true, …)`. `ok=false` only when the
+  job could not run (no WebView). The requests and answers are in
+  `docs/streams.md` ("JsRuntime contract"); the trait is
+  `volna_streams::js::JsRuntime`, re-exported by `volna_core::js`.
 
 ## Not done
 
-- The mobile stream backend (InnerTube + `JsRuntime`) does not exist yet;
-  `volna_core_init` passes `backend: None`, so mobile can browse, search, use the
-  library, lyrics and scrobbling, but tracks fail with `no_ytdlp`.
+- The InnerTube resolver ran only against Deno + jsdom on desktop
+  (`docs/streams.md`); no Android WebView / WKWebView host exists yet. Cookies are
+  set once at init (`youtubeCookies`); there is no command to change them later.
 - On the platform player there is no crossfade, gapless handoff, EQ or
   visualizer (the output is single-deck; `player_set_dsp` is stored but not
   applied; visualizer frames are never sent). Fades jump to their target volume.

@@ -18,6 +18,9 @@ default = ["ytdlp", "ffi"]
 ytdlp = ["volna-streams/ytdlp"]
 # The C ABI in `ffi.rs` (`include/volna_core.h`).
 ffi = []
+# Mobile: resolve streams in-process (volna-streams InnerTube), with the
+# player's JavaScript run by the platform WebView through the FFI JS callback.
+innertube = ["volna-streams/innertube"]
 
 [dependencies]
 serde = { workspace = true }

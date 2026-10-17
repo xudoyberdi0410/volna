@@ -45,6 +45,11 @@ pub enum StreamError {
     #[error("no suitable audio stream: {0}")]
     NoAudioStream(String),
 
+    /// The JavaScript runtime of the InnerTube backend failed (no WebView,
+    /// challenge solver broken by a new player, BotGuard rejected, ...).
+    #[error("JavaScript runtime: {0}")]
+    JsRuntime(String),
+
     #[error("upstream request failed: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -77,6 +82,7 @@ impl StreamError {
             Self::YtDlpFailed(_)
             | Self::BadYtDlpOutput(_)
             | Self::ResolveFailed(_)
+            | Self::JsRuntime(_)
             | Self::Http(_)
             | Self::UpstreamStatus(_)
             | Self::ImageTooLarge(_) => 502,

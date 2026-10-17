@@ -32,8 +32,12 @@ typedef void (*VolnaProtoCallback)(void *user_data,
 // [`volna_core_player_report`].
 typedef void (*VolnaPlayerCallback)(void *user_data, char *command_json);
 
-// A JavaScript job for the platform's engine (WebView), by convention
-// `{"script":…,"args":…}`. Answer with [`volna_core_js_result`].
+// A JavaScript job for the platform's engine (WebView): `request_json` is
+// a `JsRequest` (docs/streams.md, "JsRuntime contract"). Evaluate
+// `volnaJs(<request_json>)` in a context where [`volna_core_js_prelude`] is
+// loaded and answer with the string it resolves to through
+// [`volna_core_js_result`]. Free `request_json` with
+// [`volna_core_free_string`].
 typedef void (*VolnaJsCallback)(void *user_data, uint64_t request_id, char *request_json);
 
 #ifdef __cplusplus
@@ -41,8 +45,10 @@ extern "C" {
 #endif // __cplusplus
 
 // Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-// "audioServer": true?, "log": "info"?, "codec": "aac"?, "devProxy": "…"?}`
-// (`devProxy`: debug builds only). Returns NULL on failure; the
+// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?,
+// "codec": "aac"?, "devProxy": "…"?}` (`devProxy`: debug builds only).
+// With feature `innertube` the core resolves streams itself and runs their
+// JavaScript through [`volna_core_set_js_callback`]. Returns NULL on failure; the
 // reason is then in [`volna_core_last_error`] on the same thread.
 //
 // # Safety
@@ -116,9 +122,9 @@ void volna_core_proto(struct VolnaCore *handle, uint64_t id, const char *uri);
 // `handle` is a live handle; `event_json` is NULL or a valid string.
 bool volna_core_player_report(struct VolnaCore *handle, const char *event_json);
 
-// The answer to JS job `request_id`: `result_json` is the script's JSON
-// result when `ok`, an error message otherwise. False when nothing waits
-// for that id.
+// The answer to JS job `request_id`: when `ok`, `result_json` is the
+// string `volnaJs` resolved to, unchanged; otherwise why the job could not
+// run (no WebView, page gone). False when nothing waits for that id.
 //
 // # Safety
 // `handle` is a live handle; `result_json` is NULL or a valid string.
@@ -126,6 +132,10 @@ bool volna_core_js_result(struct VolnaCore *handle,
                           uint64_t request_id,
                           bool ok,
                           const char *result_json);
+
+// The script the platform's JS context loads once before any JS job
+// (`volnaJs` and the challenge solver). Owned by the library: do not free.
+const char *volna_core_js_prelude(void);
 
 // Frees a string the core handed out.
 //

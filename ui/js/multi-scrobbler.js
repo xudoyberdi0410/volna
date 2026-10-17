@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { LastFMScrobbler } from './lastfm.js';
 import { ListenBrainzScrobbler } from './listenbrainz.js';
 import { MalojaScrobbler } from './maloja.js';
@@ -9,6 +10,24 @@ export class MultiScrobbler {
         this.listenbrainz = new ListenBrainzScrobbler();
         this.maloja = new MalojaScrobbler();
         this.librefm = new LibreFmScrobbler();
+        // Services the daemon scrobbles itself (`scrobble_status`): skipped
+        // here so a play is not sent twice.
+        this.daemonActive = new Set();
+        void this.refreshDaemon();
+    }
+
+    async refreshDaemon() {
+        try {
+            const status = await invoke('scrobble_status');
+            this.daemonActive = new Set((status?.services || []).filter((s) => s.active).map((s) => s.service));
+        } catch {
+            this.daemonActive = new Set();
+        }
+    }
+
+    /** The services this window still scrobbles to. */
+    _own(names = ['lastfm', 'listenbrainz', 'maloja', 'librefm']) {
+        return names.filter((n) => !this.daemonActive.has(n)).map((n) => this[n]);
     }
 
     // Proxy method for Last.fm specific usage (auth flow)
@@ -33,37 +52,19 @@ export class MultiScrobbler {
     }
 
     async updateNowPlaying(track) {
-        await Promise.allSettled(
-            [
-                this.lastfm.updateNowPlaying(track),
-                this.listenbrainz.updateNowPlaying(track),
-                this.maloja.updateNowPlaying(track),
-                this.librefm.updateNowPlaying(track),
-            ].map((p) => p.catch(console.error))
-        );
+        await this.refreshDaemon();
+        await Promise.allSettled(this._own().map((s) => s.updateNowPlaying(track).catch(console.error)));
     }
 
     /** A finished play from the player journal; `unixSeconds` is when it started. */
     async scrobbleAt(track, unixSeconds) {
-        await Promise.allSettled(
-            [
-                this.lastfm.scrobbleAt(track, unixSeconds),
-                this.listenbrainz.scrobbleAt(track, unixSeconds),
-                this.maloja.scrobbleAt(track, unixSeconds),
-                this.librefm.scrobbleAt(track, unixSeconds),
-            ].map((p) => p.catch(console.error))
-        );
+        await this.refreshDaemon();
+        await Promise.allSettled(this._own().map((s) => s.scrobbleAt(track, unixSeconds).catch(console.error)));
     }
 
     async onTrackChange(track) {
-        await Promise.allSettled(
-            [
-                this.lastfm.onTrackChange(track),
-                this.listenbrainz.onTrackChange(track),
-                this.maloja.onTrackChange(track),
-                this.librefm.onTrackChange(track),
-            ].map((p) => p.catch(console.error))
-        );
+        await this.refreshDaemon();
+        await Promise.allSettled(this._own().map((s) => s.onTrackChange(track).catch(console.error)));
     }
 
     onPlaybackStop() {
@@ -75,10 +76,9 @@ export class MultiScrobbler {
 
     // Love/Like tracks on all services that support it
     async loveTrack(track) {
+        await this.refreshDaemon();
         await Promise.allSettled(
-            [this.lastfm.loveTrack(track), this.librefm.loveTrack(track), this.listenbrainz.loveTrack(track)].map((p) =>
-                p.catch(console.error)
-            )
+            this._own(['lastfm', 'librefm', 'listenbrainz']).map((s) => s.loveTrack(track).catch(console.error))
         );
         // Maloja feedback could be added here when supported
     }

@@ -1,7 +1,8 @@
 //! The `volna` daemon (`docs/native-player.md` §9): everything but the
 //! window. It owns the player, the audio server, the network, the wave,
 //! MPRIS and the tray, serves the window process over [`crate::ipc`], and
-//! starts `volna-window` on demand. No GUI toolkit is loaded here.
+//! starts `volna-window` (the Flutter app) on demand. No GUI toolkit is
+//! loaded here.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -93,20 +94,50 @@ impl EventSink for Sink {
     }
 }
 
-/// `volna-window` next to this executable (`VOLNA_WINDOW_BIN` overrides).
-fn window_exe() -> PathBuf {
+/// The window binary: `VOLNA_WINDOW_BIN`, then (debug builds) the Flutter
+/// bundle under `app/build/`, then `volna-window` next to this executable
+/// (the Windows install dir), then `../lib/volna/volna-window` (the Arch
+/// package: `/usr/bin/volna`, the Flutter bundle in `/usr/lib/volna/`).
+pub fn window_exe() -> PathBuf {
     if let Some(p) = std::env::var_os("VOLNA_WINDOW_BIN") {
         return PathBuf::from(p);
     }
-    let name = if cfg!(windows) {
-        "volna-window.exe"
-    } else {
-        "volna-window"
-    };
-    std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|e| e.parent().map(|d| d.join(name)))
-        .unwrap_or_else(|| PathBuf::from(name))
+        .and_then(|e| e.parent().map(PathBuf::from));
+    window_candidates(exe_dir.as_deref(), cfg!(debug_assertions))
+        .into_iter()
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from(WINDOW_BIN))
+}
+
+const WINDOW_BIN: &str = if cfg!(windows) {
+    "volna-window.exe"
+} else {
+    "volna-window"
+};
+
+/// Where [`window_exe`] looks, in order.
+fn window_candidates(exe_dir: Option<&std::path::Path>, dev: bool) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if dev {
+        // `flutter run` / `flutter build` output in this checkout; preferred
+        // over a stale window next to target/debug/volna.
+        let app = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../app/build");
+        for mode in ["debug", "release"] {
+            if cfg!(windows) {
+                let mode = if mode == "debug" { "Debug" } else { "Release" };
+                out.push(app.join(format!("windows/x64/runner/{mode}/{WINDOW_BIN}")));
+            } else {
+                out.push(app.join(format!("linux/x64/{mode}/bundle/{WINDOW_BIN}")));
+            }
+        }
+    }
+    if let Some(dir) = exe_dir {
+        out.push(dir.join(WINDOW_BIN));
+        out.push(dir.join("../lib/volna").join(WINDOW_BIN));
+    }
+    out
 }
 
 impl Daemon {
@@ -481,6 +512,27 @@ mod tests {
         assert_eq!(l(&[]), Launch::Show);
         assert_eq!(l(&["--tray"]), Launch::Tray);
         assert_eq!(l(&["--quit"]), Launch::Quit);
+    }
+
+    #[test]
+    fn window_lookup_order() {
+        let dir = std::path::Path::new("/usr/bin");
+        let installed = window_candidates(Some(dir), false);
+        assert_eq!(
+            installed,
+            [
+                dir.join(WINDOW_BIN),
+                dir.join("../lib/volna").join(WINDOW_BIN)
+            ]
+        );
+        let dev = window_candidates(Some(dir), true);
+        assert_eq!(dev.len(), 4);
+        assert!(dev[0].ends_with(if cfg!(windows) {
+            "app/build/windows/x64/runner/Debug/volna-window.exe"
+        } else {
+            "app/build/linux/x64/debug/bundle/volna-window"
+        }));
+        assert_eq!(dev[2..], installed[..]);
     }
 
     #[test]

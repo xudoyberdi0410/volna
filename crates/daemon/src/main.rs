@@ -12,11 +12,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--window") {
-        // Compatibility: the window is its own binary.
-        let exe = std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|d| d.join("volna-window")))
-            .unwrap_or_else(|| "volna-window".into());
+        // Compatibility: the window is its own binary (the Flutter app).
+        let exe = volna_daemon::daemon::window_exe();
         let status = std::process::Command::new(exe).status();
         std::process::exit(status.ok().and_then(|s| s.code()).unwrap_or(1));
     }

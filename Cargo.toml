@@ -8,6 +8,7 @@ members = [
     "crates/wave",
     "crates/player",
     "crates/daemon",
+    "crates/scrobble",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ volna-streams = { path = "crates/streams" }
 volna-wave = { path = "crates/wave" }
 volna-player = { path = "crates/player" }
 volna-daemon = { path = "crates/daemon" }
+volna-scrobble = { path = "crates/scrobble" }
 
 anyhow = "1"
 thiserror = "2"

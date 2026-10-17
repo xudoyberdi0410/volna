@@ -1,0 +1,23 @@
+[package]
+name = "volna-scrobble"
+description = "Scrobbling to Last.fm, Libre.fm, ListenBrainz and Maloja with an offline queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+md5 = "0.8"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

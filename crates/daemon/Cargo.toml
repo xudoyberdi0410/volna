@@ -27,6 +27,8 @@ reqwest = { workspace = true }
 base64 = "0.22"
 dirs = "7"
 mimalloc = "0.1.52"
+fastrand = "2.5"
+rusqlite = { version = "0.40", features = ["bundled"] }
 volna-ytm = { workspace = true }
 volna-net = { workspace = true }
 volna-streams = { workspace = true }

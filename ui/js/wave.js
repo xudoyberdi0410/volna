@@ -254,6 +254,8 @@ class WaveController {
     hookLikes() {
         window.addEventListener('favorites-changed', (e) => {
             const d = e.detail;
+            // An import adds many likes at once: resync the list instead of one event each.
+            if (d?.bulk && d.type === 'track') return void this.syncLikes();
             if (!d || (d.type !== 'track' && d.type !== 'video') || !d.item) return;
             this.send({ kind: 'like', track: d.item, liked: !!d.added });
             if (d.added && this.status.cold) void this.refreshStatus();

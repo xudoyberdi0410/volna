@@ -247,6 +247,26 @@ export class MusicDatabase {
         }
     }
 
+    // Bulk add for imports: one transaction, items already liked are kept as they
+    // are, and a single `favorites-changed` with `bulk: true` instead of one per item.
+    async addFavorites(type, items) {
+        const plural = type === 'mix' ? 'mixes' : `${type}s`;
+        const storeName = `favorites_${plural}`;
+        const keyName = type === 'playlist' ? 'uuid' : 'id';
+        const existing = new Set((await this.getAll(storeName)).map((e) => e[keyName]));
+        const fresh = items.filter((item) => isValidIDBKey(item[keyName]) && !existing.has(item[keyName]));
+        if (fresh.length === 0) return 0;
+        await this.performTransaction(storeName, 'readwrite', (store) => {
+            for (const item of fresh) {
+                const addedAt = item.addedAt || Date.now();
+                const minified = this._minifyItem(type, { ...item, addedAt });
+                store.put(this._toCloneable({ ...minified, addedAt }, { [keyName]: item[keyName], addedAt }));
+            }
+        });
+        window.dispatchEvent(new CustomEvent('favorites-changed', { detail: { type, bulk: true, added: true } }));
+        return fresh.length;
+    }
+
     async isFavorite(type, id) {
         const plural = type === 'mix' ? 'mixes' : `${type}s`;
         const storeName = `favorites_${plural}`;

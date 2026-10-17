@@ -25,7 +25,7 @@ function tokenize(str) {
         .filter(Boolean);
 }
 
-function stringSimilarity(a, b) {
+export function stringSimilarity(a, b) {
     const na = normalizeForMatch(a);
     const nb = normalizeForMatch(b);
     if (!na || !nb) return 0;
@@ -77,7 +77,7 @@ function scoreTrack(item, targetTitle, targetArtist, targetAlbum) {
     return { score, titleScore, artistScore, albumScore };
 }
 
-function findBestMatch(items, targetArtist, targetAlbum, importOptions, targetTitle, targetIsrc) {
+export function findBestMatch(items, targetArtist, targetAlbum, importOptions, targetTitle, targetIsrc) {
     if (!items || items.length === 0) return null;
 
     if (targetIsrc) {

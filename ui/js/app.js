@@ -27,6 +27,7 @@ import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
 import './network-settings.js';
 import { initWave } from './wave.js';
+import { initYandexImport } from './yandex-import.js';
 import { installPlaybackFailureHandler } from './playback-failures.js';
 import {
     parseCSV,
@@ -452,6 +453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeUIInteractions(Player.instance, MusicAPI.instance, UIRenderer.instance);
     installPlaybackFailureHandler(Player.instance);
     void initWave(Player.instance, MusicAPI.instance).catch((e) => console.error('[wave] init failed', e));
+    initYandexImport({ api: MusicAPI.instance, ui: UIRenderer.instance, showMissing: showMissingTracksNotification });
     initializeKeyboardShortcuts(Player.instance, audioPlayer);
 
     // Restore UI state for the current track (like button, theme)

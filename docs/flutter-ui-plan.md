@@ -37,7 +37,7 @@ a SwiftUI app over the same Rust core (see "Mobile").
   `call{id,cmd,args}` → `reply{id,ok|err}`; `proto{id,method,uri,headers}` + body →
   `proto_reply{id,status,headers}` + body; daemon → window: `event{name,payload}`, `vis`,
   `show`, `quit`.
-- Commands: `crates/daemon/src/dispatch.rs` (`call`) + `crates/daemon/src/player/commands.rs`
+- Commands: `crates/core/src/dispatch.rs` (`call`) + `crates/core/src/player/commands.rs`
   (`player_*`, incl. `player_wave_*`, `player_snapshot`, `player_journal`). Args use camelCase keys.
 - Playback is GStreamer in the daemon (`crates/player`); the window only shows state.
   MPRIS and tray are in the daemon (`player/mpris.rs`, `player/tray.rs`).
@@ -63,7 +63,7 @@ a SwiftUI app over the same Rust core (see "Mobile").
   YouTube Music (`ytm::lyrics`, plain). Hosts: `ui/js/lyrics-proxy.js`.
 - Yandex: `src-tauri/src/yandex.rs` (token from browser cookies via yt-dlp, else a Tauri
   login webview window catching `#access_token=`), matching to YTM in `ui/js/yandex-import.js`.
-- Wave: `crates/daemon/src/wave.rs` + `crates/wave`.
+- Wave: `crates/core/src/wave.rs` + `crates/wave`.
 
 ## Target layout
 
@@ -161,7 +161,7 @@ Rust:
   `net_set_cookies`, `net_audio_check`, `net_xray_logs`), wave (`wave_set_settings`,
   `wave_activities`, cold start artist picker), quality, theme (dark/light/system),
   yt-dlp version/update. UI-only prefs (theme) stored by Flutter (`shared_preferences`);
-  everything else in daemon settings (`crates/daemon/src/settings.rs`).
+  everything else in daemon settings (`crates/core/src/settings.rs`).
 3e. Scrobblers in the daemon (`crates/scrobble`), all four services:
 - One `Scrobbler` trait (`now_playing`, `scrobble(track, started_at)`, `love(track, on)`),
   a fan-out like `multi-scrobbler.js`: each service independent, one failing never blocks others.
@@ -261,6 +261,9 @@ Rust:
   `<audio>`/GStreamer path.
 
 ### Phase 6. `volna-core`
+
+Status (2026-10-17): done except the mobile stream backend. Builds, ABI and what is
+missing: `docs/mobile-build.md`.
 
 - New crate `crates/core`: owns `ytm` client, wave, library, lyrics, scrobblers, yandex
   matching, color palette, `streams` service + `LoopbackServer`, settings. Exposes one

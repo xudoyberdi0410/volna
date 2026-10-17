@@ -383,6 +383,8 @@ pub struct YtDlp {
     binary: PathBuf,
     origin: Origin,
     timeout: Duration,
+    /// Arguments for the helpers bundled next to the app (see [`helper_args`]).
+    helpers: Vec<String>,
     /// Shared by clones, so a change applies to the running service.
     cookies: std::sync::Arc<std::sync::RwLock<Cookies>>,
 }
@@ -392,6 +394,9 @@ impl YtDlp {
     /// the executable (`volna-yt-dlp` as Tauri installs the bundled one, or
     /// `volna-yt-dlp-<triple>`/`yt-dlp-<triple>`), then `yt-dlp` on `PATH`.
     pub fn locate(explicit: Option<&Path>) -> Result<Self> {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf));
         let (binary, origin) = if let Some(p) = explicit {
             if !p.is_file() {
                 return Err(StreamError::YtDlpNotFound);
@@ -403,9 +408,6 @@ impl YtDlp {
         {
             (p, Origin::Configured)
         } else {
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(Path::to_path_buf));
             find_in(exe_dir.as_deref(), std::env::var_os("PATH").as_deref())
                 .ok_or(StreamError::YtDlpNotFound)?
         };
@@ -413,6 +415,7 @@ impl YtDlp {
             binary,
             origin,
             timeout: DEFAULT_RESOLVE_TIMEOUT,
+            helpers: exe_dir.as_deref().map(helper_args).unwrap_or_default(),
             cookies: Default::default(),
         })
     }
@@ -604,7 +607,8 @@ impl YtDlp {
 
     async fn run(&self, args: Vec<String>, timeout: Duration) -> Result<std::process::Output> {
         let mut cmd = Command::new(&self.binary);
-        cmd.args(&args)
+        cmd.args(&self.helpers)
+            .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -621,6 +625,27 @@ impl YtDlp {
             Err(_) => Err(StreamError::YtDlpTimeout(timeout)),
         }
     }
+}
+
+/// yt-dlp arguments for the helpers the Windows installer ships next to the
+/// app (on Linux they come from the distro): Deno for YouTube's player
+/// JavaScript, and bgutil-pot as the PO token provider in script mode. Its
+/// yt-dlp plugin is a zip in `yt-dlp-plugins/` next to the yt-dlp sidecar,
+/// where yt-dlp looks by itself.
+fn helper_args(exe_dir: &Path) -> Vec<String> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let mut args = Vec::new();
+    let deno = exe_dir.join(format!("volna-deno{suffix}"));
+    if deno.is_file() {
+        args.push("--js-runtimes".into());
+        args.push(format!("deno:{}", deno.display()));
+    }
+    let pot = exe_dir.join(format!("volna-bgutil-pot{suffix}"));
+    if pot.is_file() {
+        args.push("--extractor-args".into());
+        args.push(format!("youtubepot-bgutilcli:cli_path={}", pot.display()));
+    }
+    args
 }
 
 fn find_in(exe_dir: Option<&Path>, path_var: Option<&OsStr>) -> Option<(PathBuf, Origin)> {
@@ -820,6 +845,29 @@ mod tests {
         assert_eq!(Quality::from_param(Some("LOW")), Quality::Low);
         assert_eq!(Quality::from_param(Some("hi")), Quality::High);
         assert_eq!(Quality::from_param(None), Quality::High);
+    }
+
+    #[test]
+    fn passes_bundled_helpers() {
+        let dir = std::env::temp_dir().join(format!("volna-helpers-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(helper_args(&dir).is_empty());
+
+        let suffix = std::env::consts::EXE_SUFFIX;
+        let deno = dir.join(format!("volna-deno{suffix}"));
+        let pot = dir.join(format!("volna-bgutil-pot{suffix}"));
+        std::fs::write(&deno, b"").unwrap();
+        std::fs::write(&pot, b"").unwrap();
+        assert_eq!(
+            helper_args(&dir),
+            [
+                "--js-runtimes".to_owned(),
+                format!("deno:{}", deno.display()),
+                "--extractor-args".to_owned(),
+                format!("youtubepot-bgutilcli:cli_path={}", pot.display()),
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

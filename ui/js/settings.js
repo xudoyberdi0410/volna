@@ -770,6 +770,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         gaplessPlaybackToggle.checked = gaplessPlaybackSettings.isEnabled();
         gaplessPlaybackToggle.addEventListener('change', (e) => {
             gaplessPlaybackSettings.setEnabled(e.target.checked);
+            void player.pushSettings({ gapless: true });
         });
     }
 
@@ -859,6 +860,11 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
+    // The native chain has no multichannel HRTF and YouTube has no spatial
+    // streams: these two options have nothing to act on.
+    binauralHrtfPreset?.closest('.binaural-sub-setting')?.style.setProperty('display', 'none');
+    binauralAutoSpatialToggle?.closest('.binaural-sub-setting')?.style.setProperty('display', 'none');
+
     if (binauralHrtfPreset) {
         binauralHrtfPreset.value = binauralDspSettings.getHrtfPreset();
         binauralHrtfPreset.addEventListener('change', async (e) => {
@@ -927,7 +933,8 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         // Helper function to update both controls
         const updatePlaybackSpeedControls = (speed) => {
             const parsedSpeed = parseFloat(speed);
-            const validSpeed = Math.max(0.01, Math.min(100, isNaN(parsedSpeed) ? 1.0 : parsedSpeed));
+            // The native player plays 0.25–4×.
+            const validSpeed = Math.max(0.25, Math.min(4, isNaN(parsedSpeed) ? 1.0 : parsedSpeed));
             playbackSpeedInput.value = validSpeed;
             // Only update slider if value is within slider range
             if (validSpeed >= 0.25 && validSpeed <= 4.0) {
@@ -949,7 +956,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
 
         playbackSpeedInput.addEventListener('input', (e) => {
             const speed = parseFloat(e.target.value);
-            if (!isNaN(speed) && speed >= 0.01 && speed <= 100) {
+            if (!isNaN(speed) && speed >= 0.25 && speed <= 4) {
                 if (speed >= 0.25 && speed <= 4.0) {
                     playbackSpeedSlider.value = speed;
                 }
@@ -5454,6 +5461,8 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     }
 
     const silenceRemovalToggle = document.getElementById('silence-removal-toggle');
+    // Silence removal needs waveform data, which YouTube does not provide.
+    silenceRemovalToggle?.closest('.setting-item')?.style.setProperty('display', 'none');
     if (silenceRemovalToggle) {
         silenceRemovalToggle.checked = silenceRemovalSettings.isEnabled();
         silenceRemovalToggle.addEventListener('change', (e) => {
@@ -5469,20 +5478,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         crossfadeToggle.addEventListener('change', (e) => {
             crossfadeSettings.setEnabled(e.target.checked);
             if (crossfadeDuration) crossfadeDuration.disabled = !e.target.checked;
-            if (e.target.checked) {
-                const candidate = player.getNextCrossfadeCandidate?.();
-                const cachedStreamInfo = candidate ? player.preloadCache?.get(candidate.track.id) : null;
-                if (
-                    cachedStreamInfo &&
-                    player.isCrossfadeShakaStream?.(cachedStreamInfo) &&
-                    !cachedStreamInfo.crossfadeShakaPlayer
-                ) {
-                    player.preloadCache.delete(candidate.track.id);
-                }
-                player.preloadNextTracks?.();
-                void player.checkPreloadConditions?.();
-            }
-            window.dispatchEvent(new CustomEvent('waveform-update'));
+            void player.pushSettings({ crossfade: true });
         });
     }
     if (crossfadeDuration) {
@@ -5490,7 +5486,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         crossfadeDuration.disabled = !crossfadeSettings.isEnabled();
         crossfadeDuration.addEventListener('change', (e) => {
             crossfadeSettings.setDuration(e.target.value);
-            window.dispatchEvent(new CustomEvent('waveform-update'));
+            void player.pushSettings({ crossfade: true });
         });
     }
 

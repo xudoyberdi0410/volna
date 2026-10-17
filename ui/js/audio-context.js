@@ -1,10 +1,15 @@
 // js/audio-context.js
-// Shared Audio Context Manager - handles EQ and provides context for visualizer
-// Supports 3-32 parametric EQ bands
+// The EQ / DSP settings facade. Audio is processed in Rust (volnadsp in
+// crates/player, docs/native-player.md §4.3); this keeps the API settings.js
+// and the visualizers were written against. Every change is saved to
+// localStorage as before and then sent to Rust as a full DspConfig (§3.2),
+// at most once per animation frame.
 
-import { isIos, isSafari } from './platform-detection.js';
 import { equalizerSettings, monoAudioSettings, binauralDspSettings } from './storage.js';
-import { BinauralDSP } from './binaural-dsp.js';
+import { AnalyserShim } from './analyser-shim.js';
+
+/** The native chain runs at a fixed rate (the capsfilter in each deck). */
+export const SAMPLE_RATE = 48000;
 
 // Generate frequency array for given number of bands using logarithmic spacing
 function generateFrequencies(bandCount, minFreq = 20, maxFreq = 20000) {
@@ -95,65 +100,67 @@ function getPresetsForBandCount(bandCount) {
 // Default export for backwards compatibility (16 bands)
 const EQ_PRESETS = EQ_PRESETS_16;
 
+const clampNum = (v, lo, hi, fallback) => {
+    const n = parseFloat(v);
+    return Math.max(lo, Math.min(hi, Number.isFinite(n) ? n : fallback));
+};
+
+/** The default Q of a parametric band: tighter as the band count grows. */
+export function defaultBandQ(bandCount) {
+    return 2.5 * Math.sqrt(16 / bandCount);
+}
+
+/**
+ * The DspConfig (docs/native-player.md §3.2) for an EQ state. Pure.
+ * `s` has the AudioContextManager field names.
+ */
+export function buildDspConfig(s) {
+    const nyquist = SAMPLE_RATE / 2 - 1;
+    const eqBands = (s.frequencies || []).slice(0, 32).map((freq, i) => ({
+        freq: Math.min(Number(freq) || 1000, nyquist),
+        gainDb: Number(s.currentGains?.[i]) || 0,
+        q: s.currentQs?.[i] > 0 ? s.currentQs[i] : defaultBandQ(s.bandCount || s.frequencies.length),
+        type: ['peaking', 'lowshelf', 'highshelf'].includes(s.currentTypes?.[i]) ? s.currentTypes[i] : 'peaking',
+        channel: ['stereo', 'mid', 'side'].includes(s.currentChannels?.[i]) ? s.currentChannels[i] : 'stereo',
+    }));
+    const geqQ = defaultBandQ(s.geqBandCount || (s.geqFrequencies || []).length || 16);
+    const geqBands = (s.geqFrequencies || []).slice(0, 32).map((freq, i) => ({
+        freq: Math.min(Number(freq) || 1000, nyquist),
+        gainDb: clampNum(s.geqGains?.[i], -30, 30, 0),
+        q: geqQ,
+    }));
+    const b = s.binaural || {};
+    return {
+        eq: { enabled: !!s.isEQEnabled, preampDb: clampNum(s.preamp, -20, 20, 0), bands: eqBands },
+        graphicEq: { enabled: !!s.isGraphicEQEnabled, preampDb: clampNum(s.geqPreamp, -20, 20, 0), bands: geqBands },
+        mono: !!s.isMonoAudioEnabled,
+        binaural: {
+            enabled: !!s.isBinauralEnabled,
+            crossfeed: {
+                enabled: b.crossfeedEnabled !== false,
+                level: ['low', 'medium', 'high'].includes(b.crossfeedLevel) ? b.crossfeedLevel : 'medium',
+            },
+            widening: { enabled: b.wideningEnabled !== false, amount: clampNum(b.wideningAmount, 0, 2, 1) },
+        },
+    };
+}
+
 class AudioContextManager {
     constructor() {
-        this.audioContext = null;
-        this.source = null;
-        this.sources = new Map();
-        this.analyser = null;
-        this.filters = [];
-        this.outputNode = null;
-        this.volumeNode = null;
-        this.isInitialized = false;
-        this.isEQEnabled = false;
-        this.isMonoAudioEnabled = false;
-        this.monoMergerNode = null;
-        this.monoSplitterNode = null;
-        this.monoGainNodeL = null;
-        this.monoGainNodeR = null;
-        this.audio = null;
-
-        // M/S (Mid/Side) processing state
+        this._sink = null;
+        this._pushScheduled = false;
+        this._analyser = null;
+        this._offlineContext = null;
+        this._eqEnabled = false;
+        this.isInitialized = true;
         this.msEnabled = false;
-        this.msSplitter = null;
-        this.msEncoderMidL = null;
-        this.msEncoderMidR = null;
-        this.msEncoderSideL = null;
-        this.msEncoderSideR = null;
-        this.msMidInput = null;
-        this.msSideInput = null;
-        this.midFilters = [];
-        this.sideFilters = [];
-        this.midOutputNode = null;
-        this.sideOutputNode = null;
-        this.msDecoderMidToL = null;
-        this.msDecoderSideToL = null;
-        this.msDecoderMidToR = null;
-        this.msDecoderSideToR = null;
-        this.msLMix = null;
-        this.msRMix = null;
-        this.msMerger = null;
-        this.msOutputNode = null;
-        this.currentVolume = 1.0;
 
-        // Band configuration
         this.bandCount = equalizerSettings.getBandCount();
         this.freqRange = equalizerSettings.getFreqRange();
         this.frequencies = generateFrequencies(this.bandCount, this.freqRange.min, this.freqRange.max);
         this.currentGains = new Array(this.bandCount).fill(0);
         this.currentChannels = new Array(this.bandCount).fill('stereo');
 
-        // Binaural DSP state
-        this.binauralDsp = null;
-        this.isBinauralEnabled = binauralDspSettings.isEnabled();
-
-        // Callbacks for audio graph changes (for visualizers like Butterchurn)
-        this._graphChangeCallbacks = [];
-
-        // --- Graphic EQ (configurable bands, separate chain) ---
-        this.geqFilters = [];
-        this.geqPreampNode = null;
-        this.geqOutputNode = null;
         this.isGraphicEQEnabled = equalizerSettings.isGraphicEqEnabled();
         this.geqBandCount = equalizerSettings.getGraphicEqBandCount();
         this.geqFreqRange = equalizerSettings.getGraphicEqFreqRange();
@@ -161,43 +168,112 @@ class AudioContextManager {
         this.geqGains = equalizerSettings.getGraphicEqGains(this.geqBandCount);
         this.geqPreamp = equalizerSettings.getGraphicEqPreamp();
 
-        // Load saved settings
         this._loadSettings();
     }
 
-    /**
-     * Update band count and reinitialize EQ
-     */
+    // ---- the Rust side ---------------------------------------------------------
+
+    /** Where configs go (set by js/player.js). Called with a DspConfig. */
+    setDspSink(fn) {
+        this._sink = fn;
+    }
+
+    /** The current DspConfig. */
+    buildDspConfig() {
+        return buildDspConfig({
+            ...this,
+            isEQEnabled: this._eqEnabled,
+            binaural: {
+                crossfeedEnabled: binauralDspSettings.getCrossfeedEnabled(),
+                crossfeedLevel: binauralDspSettings.getCrossfeedLevel(),
+                wideningEnabled: binauralDspSettings.getWideningEnabled(),
+                wideningAmount: binauralDspSettings.getWideningAmount(),
+            },
+        });
+    }
+
+    /** Sends the config once per frame however many sliders moved. */
+    scheduleDspPush() {
+        if (this._pushScheduled) return;
+        this._pushScheduled = true;
+        const flush = () => {
+            this._pushScheduled = false;
+            this.pushDsp();
+        };
+        if (typeof requestAnimationFrame === 'function' && document.visibilityState !== 'hidden') {
+            requestAnimationFrame(flush);
+        } else {
+            setTimeout(flush, 16);
+        }
+    }
+
+    pushDsp() {
+        try {
+            this._sink?.(this.buildDspConfig());
+        } catch (e) {
+            console.warn('[AudioContext] DSP push failed:', e);
+        }
+    }
+
+    get isEQEnabled() {
+        return this._eqEnabled;
+    }
+
+    /** settings.js flips this directly when switching between the two EQs. */
+    set isEQEnabled(enabled) {
+        this._eqEnabled = !!enabled;
+        this.scheduleDspPush();
+    }
+
+    // ---- Web Audio compatibility (no graph any more) --------------------------
+
+    init() {}
+    changeSource() {}
+    async resume() {}
+    notifyBinauralChannelCount() {}
+
+    isReady() {
+        return true;
+    }
+
+    /** Fed by the native visualizer frames (js/visualizer.js subscribes). */
+    getAnalyser() {
+        this._analyser ??= new AnalyserShim();
+        return this._analyser;
+    }
+
+    /** Only butterchurn needs a context, to build its own analysers. */
+    getAudioContext() {
+        if (!this._offlineContext && typeof OfflineAudioContext === 'function') {
+            this._offlineContext = new OfflineAudioContext(2, 2, SAMPLE_RATE);
+        }
+        return this._offlineContext;
+    }
+
+    getSourceNode() {
+        return null;
+    }
+
+    onGraphChange() {
+        return () => {};
+    }
+
+    // ---- band layout -----------------------------------------------------------
+
     setBandCount(count) {
         const newCount = Math.max(
             equalizerSettings.MIN_BANDS,
             Math.min(equalizerSettings.MAX_BANDS, parseInt(count, 10) || 16)
         );
-
         if (newCount === this.bandCount) return;
 
-        // Save new band count
         equalizerSettings.setBandCount(newCount);
-
-        // Update configuration
         this.bandCount = newCount;
         this.frequencies = generateFrequencies(newCount, this.freqRange.min, this.freqRange.max);
+        this.currentGains = equalizerSettings.interpolateGains(this.currentGains, newCount);
+        equalizerSettings.setGains(this.currentGains);
+        this.scheduleDspPush();
 
-        // Interpolate current gains to new band count
-        const newGains = equalizerSettings.interpolateGains(this.currentGains, newCount);
-        this.currentGains = newGains;
-        equalizerSettings.setGains(newGains);
-
-        // Reinitialize EQ if already initialized
-        if (this.isInitialized && this.audioContext) {
-            this._destroyMSFilters();
-            this._destroyEQ();
-            this._createEQ();
-            if (this.msEnabled) this._createMSFilters();
-            this._connectGraph();
-        }
-
-        // Dispatch event for UI update
         window.dispatchEvent(
             new CustomEvent('equalizer-band-count-changed', {
                 detail: { bandCount: newCount, frequencies: this.frequencies },
@@ -205,835 +281,110 @@ class AudioContextManager {
         );
     }
 
-    /**
-     * Update frequency range and reinitialize EQ
-     */
     setFreqRange(minFreq, maxFreq) {
         const newMin = Math.max(10, Math.min(96000, parseInt(minFreq, 10) || 20));
         const newMax = Math.max(10, Math.min(96000, parseInt(maxFreq, 10) || 20000));
-
         if (newMin >= newMax) {
             console.warn('[AudioContext] Invalid frequency range: min must be less than max');
             return false;
         }
-
         if (newMin === this.freqRange.min && newMax === this.freqRange.max) return true;
 
-        // Save new frequency range
         equalizerSettings.setFreqRange(newMin, newMax);
-
-        // Update configuration
         this.freqRange = { min: newMin, max: newMax };
         this.frequencies = generateFrequencies(this.bandCount, newMin, newMax);
+        this.scheduleDspPush();
 
-        // Reinitialize EQ if already initialized
-        if (this.isInitialized && this.audioContext) {
-            this._destroyMSFilters();
-            this._destroyEQ();
-            this._createEQ();
-            if (this.msEnabled) this._createMSFilters();
-            this._connectGraph();
-        }
-
-        // Dispatch event for UI update
         window.dispatchEvent(
             new CustomEvent('equalizer-freq-range-changed', {
                 detail: { min: newMin, max: newMax, frequencies: this.frequencies },
             })
         );
-
         return true;
     }
 
-    /**
-     * Destroy EQ filters
-     */
-    _destroyEQ() {
-        if (this.filters) {
-            this.filters.forEach((filter) => {
-                try {
-                    filter.disconnect();
-                } catch {
-                    /* ignore */
-                }
-            });
-        }
-        this.filters = [];
-
-        // Destroy preamp node
-        if (this.preampNode) {
-            try {
-                this.preampNode.disconnect();
-            } catch {
-                /* ignore */
-            }
-            this.preampNode = null;
-        }
-    }
-
-    /**
-     * Create M/S matrix nodes (encoder, decoder, merger).
-     * These are cheap static nodes created once in init().
-     */
-    _createMSNodes() {
-        if (!this.audioContext) return;
-
-        this.msSplitter = this.audioContext.createChannelSplitter(2);
-
-        // Encoder: L/R → M/S
-        this.msEncoderMidL = this.audioContext.createGain();
-        this.msEncoderMidL.gain.value = 0.5;
-        this.msEncoderMidR = this.audioContext.createGain();
-        this.msEncoderMidR.gain.value = 0.5;
-        this.msEncoderSideL = this.audioContext.createGain();
-        this.msEncoderSideL.gain.value = 0.5;
-        this.msEncoderSideR = this.audioContext.createGain();
-        this.msEncoderSideR.gain.value = -0.5;
-
-        // Mono mixing points for M and S signals
-        this.msMidInput = this.audioContext.createGain();
-        this.msMidInput.channelCount = 1;
-        this.msMidInput.channelCountMode = 'explicit';
-        this.msSideInput = this.audioContext.createGain();
-        this.msSideInput.channelCount = 1;
-        this.msSideInput.channelCountMode = 'explicit';
-
-        // Chain output nodes
-        this.midOutputNode = this.audioContext.createGain();
-        this.sideOutputNode = this.audioContext.createGain();
-
-        // Decoder: M/S → L/R
-        this.msDecoderMidToL = this.audioContext.createGain();
-        this.msDecoderMidToL.gain.value = 1.0;
-        this.msDecoderSideToL = this.audioContext.createGain();
-        this.msDecoderSideToL.gain.value = 1.0;
-        this.msDecoderMidToR = this.audioContext.createGain();
-        this.msDecoderMidToR.gain.value = 1.0;
-        this.msDecoderSideToR = this.audioContext.createGain();
-        this.msDecoderSideToR.gain.value = -1.0;
-
-        // L/R recombination points (mono)
-        this.msLMix = this.audioContext.createGain();
-        this.msLMix.channelCount = 1;
-        this.msLMix.channelCountMode = 'explicit';
-        this.msRMix = this.audioContext.createGain();
-        this.msRMix.channelCount = 1;
-        this.msRMix.channelCountMode = 'explicit';
-
-        this.msMerger = this.audioContext.createChannelMerger(2);
-        this.msOutputNode = this.audioContext.createGain();
-    }
-
-    /**
-     * Create parallel M/S filter chains based on current band settings.
-     * Mid filters process the center image, Side filters process stereo width.
-     */
-    _createMSFilters() {
-        if (!this.audioContext) return;
-
-        this.midFilters = this.frequencies.map((freq, i) => {
-            const type = (this.currentTypes && this.currentTypes[i]) || 'peaking';
-            const q = this.currentQs && this.currentQs[i] > 0 ? this.currentQs[i] : this._calculateQ(i);
-            const ch = (this.currentChannels && this.currentChannels[i]) || 'stereo';
-            const gain = ch === 'side' ? 0 : this.currentGains[i] || 0;
-            const filter = this.audioContext.createBiquadFilter();
-            filter.type = type;
-            filter.frequency.value = freq;
-            filter.Q.value = q;
-            filter.gain.value = gain;
-            return filter;
-        });
-
-        this.sideFilters = this.frequencies.map((freq, i) => {
-            const type = (this.currentTypes && this.currentTypes[i]) || 'peaking';
-            const q = this.currentQs && this.currentQs[i] > 0 ? this.currentQs[i] : this._calculateQ(i);
-            const ch = (this.currentChannels && this.currentChannels[i]) || 'stereo';
-            const gain = ch === 'mid' ? 0 : this.currentGains[i] || 0;
-            const filter = this.audioContext.createBiquadFilter();
-            filter.type = type;
-            filter.frequency.value = freq;
-            filter.Q.value = q;
-            filter.gain.value = gain;
-            return filter;
-        });
-    }
-
-    /**
-     * Destroy M/S parallel filter chains
-     */
-    _destroyMSFilters() {
-        const sd = (node) => {
-            try {
-                node?.disconnect();
-            } catch {
-                /* */
-            }
-        };
-        this.midFilters.forEach(sd);
-        this.sideFilters.forEach(sd);
-        this.midFilters = [];
-        this.sideFilters = [];
-    }
-
-    /**
-     * Update an existing filter chain in place.
-     * @param {Array} chain - Filter array to update (this.filters, this.midFilters, or this.sideFilters)
-     * @param {Array} freqs - New frequencies
-     * @param {Array} types - New filter types
-     * @param {Array} qs - New Q values
-     * @param {Array} gains - New gain values
-     * @param {number} now - Current audio context time
-     */
-    _updateFilterChain(chain, freqs, types, qs, gains, now) {
-        chain.forEach((filter, i) => {
-            const type = types[i] || 'peaking';
-            const q = qs[i] > 0 ? qs[i] : this._calculateQ(i);
-            const gain = gains[i];
-            filter.type = type;
-            filter.frequency.setTargetAtTime(freqs[i], now, 0.005);
-            filter.gain.setTargetAtTime(gain, now, 0.005);
-            filter.Q.setTargetAtTime(q, now, 0.005);
-        });
-    }
-
-    /**
-     * Create EQ filters
-     */
-    _createEQ() {
-        if (!this.audioContext) return;
-
-        // Create preamp node
-        if (!this.preampNode) {
-            this.preampNode = this.audioContext.createGain();
-        }
-        // Set preamp gain
-        const preampValue = this.preamp || 0;
-        const gainValue = Math.pow(10, preampValue / 20);
-        this.preampNode.gain.value = gainValue;
-
-        // Create filters for each frequency band
-        this.filters = this.frequencies.map((freq, index) => {
-            const type = (this.currentTypes && this.currentTypes[index]) || 'peaking';
-            const q = this.currentQs && this.currentQs[index] > 0 ? this.currentQs[index] : this._calculateQ(index);
-            const gain = this.currentGains[index] || 0;
-            const filter = this.audioContext.createBiquadFilter();
-            filter.type = type;
-            filter.frequency.value = freq;
-            filter.Q.value = q;
-            filter.gain.value = gain;
-            return filter;
-        });
-
-        // Create volume node if not exists
-        if (!this.volumeNode) {
-            this.volumeNode = this.audioContext.createGain();
-        }
-    }
-
-    /**
-     * Calculate Q factor for each band
-     */
     _calculateQ(_index) {
-        // Scale Q based on band count for consistent sound
-        const baseQ = 2.5;
-        const scalingFactor = Math.sqrt(16 / this.bandCount);
-        return baseQ * scalingFactor;
+        return defaultBandQ(this.bandCount);
     }
 
-    /**
-     * Register a callback to be called when audio graph is reconnected
-     * @param {Function} callback - Function to call when graph changes
-     * @returns {Function} - Unregister function
-     */
-    onGraphChange(callback) {
-        this._graphChangeCallbacks.push(callback);
-        return () => {
-            const index = this._graphChangeCallbacks.indexOf(callback);
-            if (index > -1) {
-                this._graphChangeCallbacks.splice(index, 1);
-            }
-        };
-    }
+    // ---- switches ----------------------------------------------------------------
 
-    /**
-     * Notify all registered callbacks that graph has changed
-     */
-    _notifyGraphChange() {
-        this._graphChangeCallbacks.forEach((callback) => {
-            try {
-                callback(this.source);
-            } catch (e) {
-                console.warn('[AudioContext] Graph change callback failed:', e);
-            }
-        });
-    }
-
-    /**
-     * Initialize the audio context and connect to the audio element
-     * This should be called when audio starts playing
-     */
-    init(audioElement) {
-        if (this.isInitialized) return;
-        if (!audioElement) return;
-
-        this.audio = audioElement;
-
-        try {
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-
-            try {
-                // Safari can retain a large Web Audio output buffer across media seeks,
-                // leaving currentTime ahead of what is actually audible. Keep its graph
-                // interactive so lyric timing follows direct-file seeks closely.
-                this.audioContext = new AudioContext({
-                    latencyHint: isIos || isSafari ? 'interactive' : 'playback',
-                });
-                console.log(`[AudioContext] Created: ${this.audioContext.sampleRate}Hz`);
-            } catch {
-                this.audioContext = new AudioContext();
-            }
-
-            if (true) {
-                if (!this.sources.has(audioElement)) {
-                    const src = this.audioContext.createMediaElementSource(audioElement);
-                    this.sources.set(audioElement, src);
-                }
-                this.source = this.sources.get(audioElement);
-
-                try {
-                    this.audioContext.destination.channelCount = Math.min(
-                        this.audioContext.destination.maxChannelCount,
-                        8
-                    );
-                    this.audioContext.destination.channelCountMode = 'explicit';
-                    this.audioContext.destination.channelInterpretation = 'discrete';
-                } catch {
-                    // Some browsers may not support changing destination channel count
-                }
-
-                this.binauralDsp = new BinauralDSP(this.audioContext);
-                void this._loadBinauralSettings();
-            }
-
-            this.analyser = this.audioContext.createAnalyser();
-            this.analyser.fftSize = 1024;
-            this.analyser.smoothingTimeConstant = 0.7;
-
-            this._createEQ();
-            this._createGraphicEQ();
-            this._createMSNodes();
-            if (this.msEnabled) {
-                this._createMSFilters();
-            }
-
-            this.outputNode = this.audioContext.createGain();
-            this.outputNode.gain.value = 1;
-
-            this.volumeNode = this.audioContext.createGain();
-            this.volumeNode.gain.value = this.currentVolume;
-
-            this.monoMergerNode = this.audioContext.createChannelMerger(2);
-
-            this._connectGraph();
-
-            // Auto-recover from unexpected suspensions (e.g. background throttling)
-            this.audioContext.addEventListener('statechange', () => {
-                if (this.audioContext.state === 'interrupted' || this.audioContext.state === 'suspended') {
-                    console.log(`[AudioContext] State changed to ${this.audioContext.state}, attempting resume`);
-                    setTimeout(() => {
-                        if (this.audioContext && this.audioContext.state !== 'running' && (this.source || true)) {
-                            this.audioContext.resume().catch((e) => {
-                                console.warn('[AudioContext] Auto-resume failed:', e);
-                            });
-                        }
-                    }, 100);
-                }
-            });
-
-            this.isInitialized = true;
-        } catch (e) {
-            console.warn('[AudioContext] Init failed:', e);
-        }
-    }
-
-    changeSource(audioElement) {
-        if (!this.audioContext) {
-            this.init(audioElement);
-            return;
-        }
-        if (this.audio === audioElement) return;
-
-        if (true) {
-            try {
-                if (this.source) {
-                    try {
-                        this.source.disconnect();
-                    } catch {
-                        // node may already be disconnected
-                    }
-                }
-
-                this.audio = audioElement;
-
-                if (!this.sources.has(audioElement)) {
-                    this.sources.set(audioElement, this.audioContext.createMediaElementSource(audioElement));
-                }
-                this.source = this.sources.get(audioElement);
-
-                if (this.isInitialized) {
-                    this._connectGraph();
-                }
-            } catch (e) {
-                console.warn('changeSource failed:', e);
-            }
-        } else {
-            this.audio = audioElement;
-        }
-    }
-
-    createCrossfadeOutput(audioElement) {
-        if (!this.audioContext || !audioElement) return null;
-
-        try {
-            if (!this.sources.has(audioElement)) {
-                this.sources.set(audioElement, this.audioContext.createMediaElementSource(audioElement));
-            }
-            const source = this.sources.get(audioElement);
-            const gainNode = this.audioContext.createGain();
-            gainNode.gain.value = 0;
-            source.connect(gainNode);
-            gainNode.connect(this.audioContext.destination);
-
-            return {
-                gainNode,
-                disconnect() {
-                    try {
-                        source.disconnect(gainNode);
-                    } catch {}
-                    try {
-                        gainNode.disconnect();
-                    } catch {}
-                },
-            };
-        } catch (error) {
-            console.warn('Unable to create crossfade output:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Connect the audio graph based on EQ and mono audio state.
-     * Uses connect-before-disconnect ordering to avoid audio dropouts:
-     * the new chain is wired up first, then the old connections are torn down.
-     */
-    _connectGraph() {
-        if (!this.isInitialized || !this.source || !this.audioContext) return;
-
-        if (this.geqFilters.length === 0 && this.isGraphicEQEnabled) {
-            this._createGraphicEQ();
-        }
-
-        const connectTail = (lastNode) => {
-            if (this.isGraphicEQEnabled && this.geqFilters.length > 0) {
-                lastNode.connect(this.geqPreampNode);
-                this.geqPreampNode.connect(this.geqFilters[0]);
-                for (let i = 0; i < this.geqFilters.length - 1; i++) {
-                    this.geqFilters[i].connect(this.geqFilters[i + 1]);
-                }
-                this.geqFilters[this.geqFilters.length - 1].connect(this.geqOutputNode);
-                this.geqOutputNode.connect(this.analyser);
-            } else {
-                lastNode.connect(this.analyser);
-            }
-            this.analyser.connect(this.volumeNode);
-            this.volumeNode.connect(this.audioContext.destination);
-        };
-
-        try {
-            if (this.isMonoAudioEnabled && this.monoMergerNode && !this.monoGainNodeL) {
-                // True (L+R)/2 downmix: split channels, attenuate each by 0.5,
-                // then sum both into each merger input (dual mono).
-                this.monoSplitterNode = this.audioContext.createChannelSplitter(2);
-                this.monoGainNodeL = this.audioContext.createGain();
-                this.monoGainNodeL.gain.value = 0.5;
-                this.monoGainNodeR = this.audioContext.createGain();
-                this.monoGainNodeR.gain.value = 0.5;
-                // Keep legacy field pointing at the left gain for any external use.
-                this.monoGainNode = this.monoGainNodeL;
-            }
-
-            const safeDisconnect = (node) => {
-                try {
-                    node?.disconnect();
-                } catch {}
-            };
-            safeDisconnect(this.source);
-            safeDisconnect(this.monoGainNode);
-            safeDisconnect(this.monoGainNodeL);
-            safeDisconnect(this.monoGainNodeR);
-            safeDisconnect(this.monoSplitterNode);
-            safeDisconnect(this.monoMergerNode);
-            if (this.binauralDsp) {
-                const { input, output } = this.binauralDsp.getNodes();
-                safeDisconnect(input);
-                safeDisconnect(output);
-            }
-            safeDisconnect(this.preampNode);
-            this.filters.forEach(safeDisconnect);
-            safeDisconnect(this.outputNode);
-            safeDisconnect(this.msSplitter);
-            safeDisconnect(this.msEncoderMidL);
-            safeDisconnect(this.msEncoderMidR);
-            safeDisconnect(this.msEncoderSideL);
-            safeDisconnect(this.msEncoderSideR);
-            safeDisconnect(this.msMidInput);
-            safeDisconnect(this.msSideInput);
-            this.midFilters.forEach(safeDisconnect);
-            this.sideFilters.forEach(safeDisconnect);
-            safeDisconnect(this.midOutputNode);
-            safeDisconnect(this.sideOutputNode);
-            safeDisconnect(this.msDecoderMidToL);
-            safeDisconnect(this.msDecoderSideToL);
-            safeDisconnect(this.msDecoderMidToR);
-            safeDisconnect(this.msDecoderSideToR);
-            safeDisconnect(this.msLMix);
-            safeDisconnect(this.msRMix);
-            safeDisconnect(this.msMerger);
-            safeDisconnect(this.msOutputNode);
-            safeDisconnect(this.geqPreampNode);
-            this.geqFilters.forEach(safeDisconnect);
-            safeDisconnect(this.geqOutputNode);
-            safeDisconnect(this.analyser);
-            safeDisconnect(this.volumeNode);
-
-            let lastNode = this.source;
-
-            if (this.isMonoAudioEnabled && this.monoMergerNode) {
-                this.source.connect(this.monoSplitterNode);
-                this.monoSplitterNode.connect(this.monoGainNodeL, 0);
-                this.monoSplitterNode.connect(this.monoGainNodeR, 1);
-                this.monoGainNodeL.connect(this.monoMergerNode, 0, 0);
-                this.monoGainNodeL.connect(this.monoMergerNode, 0, 1);
-                this.monoGainNodeR.connect(this.monoMergerNode, 0, 0);
-                this.monoGainNodeR.connect(this.monoMergerNode, 0, 1);
-                lastNode = this.monoMergerNode;
-            }
-
-            if (this.isBinauralEnabled && this.binauralDsp) {
-                const { input, output } = this.binauralDsp.getNodes();
-                lastNode.connect(input);
-                this.binauralDsp.reconnect();
-                lastNode = output;
-            }
-
-            if (this.isEQEnabled && this.filters.length > 0) {
-                const useMS = this.msEnabled && this.midFilters.length > 0 && this.sideFilters.length > 0;
-
-                if (this.preampNode) {
-                    lastNode.connect(this.preampNode);
-                    lastNode = this.preampNode;
-                }
-
-                if (useMS) {
-                    lastNode.connect(this.msSplitter);
-
-                    this.msSplitter.connect(this.msEncoderMidL, 0);
-                    this.msSplitter.connect(this.msEncoderMidR, 1);
-                    this.msEncoderMidL.connect(this.msMidInput);
-                    this.msEncoderMidR.connect(this.msMidInput);
-
-                    this.msSplitter.connect(this.msEncoderSideL, 0);
-                    this.msSplitter.connect(this.msEncoderSideR, 1);
-                    this.msEncoderSideL.connect(this.msSideInput);
-                    this.msEncoderSideR.connect(this.msSideInput);
-
-                    this.msMidInput.connect(this.midFilters[0]);
-                    for (let i = 0; i < this.midFilters.length - 1; i++) {
-                        this.midFilters[i].connect(this.midFilters[i + 1]);
-                    }
-                    this.midFilters[this.midFilters.length - 1].connect(this.midOutputNode);
-
-                    this.msSideInput.connect(this.sideFilters[0]);
-                    for (let i = 0; i < this.sideFilters.length - 1; i++) {
-                        this.sideFilters[i].connect(this.sideFilters[i + 1]);
-                    }
-                    this.sideFilters[this.sideFilters.length - 1].connect(this.sideOutputNode);
-
-                    this.midOutputNode.connect(this.msDecoderMidToL);
-                    this.sideOutputNode.connect(this.msDecoderSideToL);
-                    this.msDecoderMidToL.connect(this.msLMix);
-                    this.msDecoderSideToL.connect(this.msLMix);
-
-                    this.midOutputNode.connect(this.msDecoderMidToR);
-                    this.sideOutputNode.connect(this.msDecoderSideToR);
-                    this.msDecoderMidToR.connect(this.msRMix);
-                    this.msDecoderSideToR.connect(this.msRMix);
-
-                    this.msLMix.connect(this.msMerger, 0, 0);
-                    this.msRMix.connect(this.msMerger, 0, 1);
-                    this.msMerger.connect(this.msOutputNode);
-
-                    connectTail(this.msOutputNode);
-                } else {
-                    lastNode.connect(this.filters[0]);
-                    for (let i = 0; i < this.filters.length - 1; i++) {
-                        this.filters[i].connect(this.filters[i + 1]);
-                    }
-                    this.filters[this.filters.length - 1].connect(this.outputNode);
-                    connectTail(this.outputNode);
-                }
-            } else {
-                connectTail(lastNode);
-            }
-
-            this._notifyGraphChange();
-        } catch (e) {
-            console.warn('[AudioContext] Failed to connect graph:', e);
-            try {
-                this.source.connect(this.audioContext.destination);
-            } catch {}
-        }
-    }
-
-    /**
-     * Resume audio context (required after user interaction)
-     * @returns {Promise<boolean>} - Returns true if context is running
-     */
-    async resume() {
-        if (!this.audioContext) return false;
-
-        console.log('[AudioContext] Current state:', this.audioContext.state);
-
-        if (this.audioContext.state === 'suspended') {
-            try {
-                await this.audioContext.resume();
-                console.log('[AudioContext] Resumed successfully, state:', this.audioContext.state);
-            } catch (e) {
-                console.warn('[AudioContext] Failed to resume:', e);
-            }
-        }
-
-        // Ensure graph is connected after resuming (iOS may disconnect when suspended)
-        if (this.isInitialized && this.audioContext.state === 'running') {
-            this._connectGraph();
-        }
-
-        return this.audioContext.state === 'running';
-    }
-
-    /**
-     * Get the analyser node for the visualizer
-     */
-    getAnalyser() {
-        return this.analyser;
-    }
-
-    /**
-     * Get the audio context
-     */
-    getAudioContext() {
-        return this.audioContext;
-    }
-
-    /**
-     * Get the source node for visualizers
-     */
-    getSourceNode() {
-        return this.source;
-    }
-
-    /**
-     * Check if initialized and active
-     */
-    isReady() {
-        return this.isInitialized && this.audioContext !== null;
-    }
-
-    /**
-     * Set the volume level (0.0 to 1.0)
-     * @param {number} value - Volume level
-     */
-    setVolume(value) {
-        this.currentVolume = Math.max(0, Math.min(1, value));
-        if (this.volumeNode && this.audioContext) {
-            const now = this.audioContext.currentTime;
-            this.volumeNode.gain.setTargetAtTime(this.currentVolume, now, 0.01);
-            window.dispatchEvent(new CustomEvent('volume-change'));
-        }
-    }
-
-    /**
-     * Toggle EQ on/off
-     */
     toggleEQ(enabled) {
-        this.isEQEnabled = enabled;
         equalizerSettings.setEnabled(enabled);
-
-        if (this.isInitialized) {
-            this._connectGraph();
-        }
-
-        return this.isEQEnabled;
+        this.isEQEnabled = enabled;
+        return this._eqEnabled;
     }
 
-    /**
-     * Check if EQ is active
-     */
     isEQActive() {
-        return this.isInitialized && this.isEQEnabled;
+        return this._eqEnabled;
     }
 
-    /**
-     * Toggle mono audio on/off
-     */
     toggleMonoAudio(enabled) {
         this.isMonoAudioEnabled = enabled;
         monoAudioSettings.setEnabled(enabled);
-
-        if (this.isInitialized) {
-            this._connectGraph();
-        }
-
+        this.scheduleDspPush();
         return this.isMonoAudioEnabled;
     }
 
-    /**
-     * Check if mono audio is active
-     */
     isMonoAudioActive() {
-        return this.isInitialized && this.isMonoAudioEnabled;
+        return this.isMonoAudioEnabled;
     }
 
-    // ==========================================
-    // Binaural DSP controls
-    // ==========================================
+    // ---- binaural (crossfeed + widening; HRTF is gone) -------------------------
 
-    /**
-     * Toggle binaural DSP on/off
-     */
     async toggleBinaural(enabled) {
         this.isBinauralEnabled = enabled;
         binauralDspSettings.setEnabled(enabled);
-
-        if (this.binauralDsp) {
-            await this.binauralDsp.setEnabled(enabled);
-        }
-
-        if (this.isInitialized) {
-            this._connectGraph();
-        }
-
+        this.scheduleDspPush();
         return this.isBinauralEnabled;
     }
 
-    /**
-     * Check if binaural DSP is active
-     */
     isBinauralActive() {
-        return this.isInitialized && this.isBinauralEnabled;
+        return this.isBinauralEnabled;
     }
 
-    /**
-     * Set crossfeed enabled state
-     */
     async setBinauralCrossfeedEnabled(enabled) {
         binauralDspSettings.setCrossfeedEnabled(enabled);
-        if (this.binauralDsp) {
-            await this.binauralDsp.setCrossfeedEnabled(enabled);
-            if (this.isInitialized) this._connectGraph();
-        }
+        this.scheduleDspPush();
     }
 
-    /**
-     * Set crossfeed level
-     * @param {'low'|'medium'|'high'} level
-     */
     setBinauralCrossfeedLevel(level) {
         binauralDspSettings.setCrossfeedLevel(level);
-        if (this.binauralDsp) {
-            this.binauralDsp.setCrossfeedLevel(level);
-        }
+        this.scheduleDspPush();
     }
 
-    /**
-     * Set HRTF preset
-     * @param {'intimate'|'studio'|'wide'} preset
-     */
+    /** Stored only: multichannel HRTF is not part of the native chain. */
     async setBinauralHrtfPreset(preset) {
         binauralDspSettings.setHrtfPreset(preset);
-        if (this.binauralDsp) {
-            await this.binauralDsp.setHrtfPreset(preset);
-        }
     }
 
-    /**
-     * Set stereo widening enabled state
-     */
     async setBinauralWideningEnabled(enabled) {
         binauralDspSettings.setWideningEnabled(enabled);
-        if (this.binauralDsp) {
-            await this.binauralDsp.setWideningEnabled(enabled);
-            if (this.isInitialized) this._connectGraph();
-        }
+        this.scheduleDspPush();
     }
 
-    /**
-     * Set stereo widening amount
-     * @param {number} amount - 0.0 to 2.0 (1.0 = neutral)
-     */
     setBinauralWidening(amount) {
         binauralDspSettings.setWideningAmount(amount);
-        if (this.binauralDsp) {
-            this.binauralDsp.setWideningAmount(amount);
-        }
+        this.scheduleDspPush();
     }
 
-    /**
-     * Notify binaural DSP of channel count change (for multichannel detection)
-     * @param {number} channelCount
-     */
-    async notifyBinauralChannelCount(channelCount) {
-        if (this.binauralDsp && this.isBinauralEnabled) {
-            await this.binauralDsp.detectAndConfigure(channelCount);
-            if (this.isInitialized) this._connectGraph();
-        }
-    }
-
-    /**
-     * Get binaural DSP status
-     */
     getBinauralStatus() {
-        return this.binauralDsp ? this.binauralDsp.getStatus() : null;
+        return {
+            enabled: this.isBinauralEnabled,
+            crossfeedEnabled: binauralDspSettings.getCrossfeedEnabled(),
+            crossfeedLevel: binauralDspSettings.getCrossfeedLevel(),
+            wideningEnabled: binauralDspSettings.getWideningEnabled(),
+            wideningAmount: binauralDspSettings.getWideningAmount(),
+        };
     }
 
-    /**
-     * Load binaural settings from storage and apply to DSP
-     */
-    async _loadBinauralSettings() {
-        if (!this.binauralDsp) return;
+    // ---- gains ---------------------------------------------------------------------
 
-        this.isBinauralEnabled = binauralDspSettings.isEnabled();
-        this.binauralDsp.crossfeedEnabled = binauralDspSettings.getCrossfeedEnabled();
-        this.binauralDsp.crossfeedLevel = binauralDspSettings.getCrossfeedLevel();
-        this.binauralDsp.hrtfPreset = binauralDspSettings.getHrtfPreset();
-        this.binauralDsp.wideningEnabled = binauralDspSettings.getWideningEnabled();
-        this.binauralDsp.wideningAmount = binauralDspSettings.getWideningAmount();
-
-        if (this.isBinauralEnabled) {
-            await this.binauralDsp.setEnabled(true);
-        }
-    }
-
-    /**
-     * Get current gain range
-     */
     getRange() {
         return equalizerSettings.getRange();
     }
 
-    /**
-     * Calculate biquad filter magnitude response in dB at a given frequency
-     */
+    /** Biquad magnitude response in dB (RBJ; shelves use Q, as the native chain does). */
     _biquadResponseDb(f, band, sr) {
         if (!band.enabled || !band.type) return 0;
         const w = (2 * Math.PI * band.freq) / sr;
@@ -1082,96 +433,51 @@ class AudioContextManager {
         return 10 * Math.log10(n / d);
     }
 
-    /**
-     * Clamp gain to valid range
-     */
     _clampGain(gainDb) {
         const range = this.getRange();
         return Math.max(range.min, Math.min(range.max, gainDb));
     }
 
-    /**
-     * Set gain for a specific band
-     */
     setBandGain(bandIndex, gainDb) {
         if (bandIndex < 0 || bandIndex >= this.bandCount) return;
-
-        const clampedGain = this._clampGain(gainDb);
-        this.currentGains[bandIndex] = clampedGain;
-
-        if (this.filters[bandIndex] && this.audioContext) {
-            const now = this.audioContext.currentTime;
-            this.filters[bandIndex].gain.setTargetAtTime(clampedGain, now, 0.01);
-        }
-
+        this.currentGains[bandIndex] = this._clampGain(gainDb);
         equalizerSettings.setGains(this.currentGains);
+        this.scheduleDspPush();
     }
 
-    /**
-     * Set all band gains at once
-     */
     setAllGains(gains) {
         if (!Array.isArray(gains)) return;
-
-        // Ensure gains array matches current band count
-        let adjustedGains = gains;
-        if (gains.length !== this.bandCount) {
-            adjustedGains = equalizerSettings.interpolateGains(gains, this.bandCount);
-        }
-
-        const now = this.audioContext?.currentTime || 0;
-
-        adjustedGains.forEach((gain, index) => {
-            const clampedGain = this._clampGain(gain);
-            this.currentGains[index] = clampedGain;
-
-            if (this.filters[index]) {
-                this.filters[index].gain.setTargetAtTime(clampedGain, now, 0.01);
-            }
+        const adjusted =
+            gains.length !== this.bandCount ? equalizerSettings.interpolateGains(gains, this.bandCount) : gains;
+        adjusted.forEach((gain, i) => {
+            this.currentGains[i] = this._clampGain(gain);
         });
-
         equalizerSettings.setGains(this.currentGains);
+        this.scheduleDspPush();
     }
 
-    /**
-     * Apply a preset
-     */
     applyPreset(presetKey) {
-        const presets = getPresetsForBandCount(this.bandCount);
-        const preset = presets[presetKey];
+        const preset = getPresetsForBandCount(this.bandCount)[presetKey];
         if (!preset) return;
-
         this.setAllGains(preset.gains);
         equalizerSettings.setPreset(presetKey);
     }
 
-    /**
-     * Reset all bands to flat
-     */
     reset() {
         this.setAllGains(new Array(this.bandCount).fill(0));
         equalizerSettings.setPreset('flat');
     }
 
-    /**
-     * Get current gains
-     */
     getGains() {
         return [...this.currentGains];
     }
 
-    /**
-     * Get current band count
-     */
     getBandCount() {
         return this.bandCount;
     }
 
-    /**
-     * Load settings from storage
-     */
     _loadSettings() {
-        this.isEQEnabled = equalizerSettings.isEnabled();
+        this._eqEnabled = equalizerSettings.isEnabled();
         this.bandCount = equalizerSettings.getBandCount();
         this.freqRange = equalizerSettings.getFreqRange();
         const customFreqs = equalizerSettings.getCustomFrequencies(this.bandCount);
@@ -1186,36 +492,20 @@ class AudioContextManager {
         this.isBinauralEnabled = binauralDspSettings.isEnabled();
     }
 
-    /**
-     * Set preamp value in dB
-     * @param {number} db - Preamp value in dB (-20 to +20)
-     */
     setPreamp(db) {
         const clampedDb = Math.max(-20, Math.min(20, parseFloat(db) || 0));
         this.preamp = clampedDb;
         equalizerSettings.setPreamp(clampedDb);
-
-        // Update preamp node if it exists
-        if (this.preampNode && this.audioContext) {
-            const gainValue = Math.pow(10, clampedDb / 20);
-            const now = this.audioContext.currentTime;
-            this.preampNode.gain.setTargetAtTime(gainValue, now, 0.01);
-        }
+        this.scheduleDspPush();
     }
 
-    /**
-     * Get current preamp value
-     * @returns {number} Current preamp value in dB
-     */
     getPreamp() {
         return this.preamp || 0;
     }
 
     /**
-     * Apply AutoEQ-generated bands to the equalizer
-     * Unlike regular presets, AutoEQ bands have specific frequencies, gains, and Q values
-     * @param {Array<{id: number, type: string, freq: number, gain: number, q: number, enabled: boolean}>} bands
-     * @returns {string} Exported text representation of the applied EQ
+     * Applies AutoEQ bands (specific frequencies, gains and Qs).
+     * @returns {string} the applied EQ as text
      */
     applyAutoEQBands(bands, skipPreamp = false) {
         if (!bands || bands.length === 0) return '';
@@ -1224,16 +514,12 @@ class AudioContextManager {
         if (enabledBands.length === 0) return '';
         const count = Math.max(equalizerSettings.MIN_BANDS, Math.min(equalizerSettings.MAX_BANDS, enabledBands.length));
 
-        // Calculate preamp: negative of cumulative peak gain across all bands to prevent clipping
+        // Preamp: the negative of the summed peak gain, so nothing clips.
         let cumulativePeak = 0;
         if (!skipPreamp) {
-            const sr = this.audioContext?.sampleRate ?? 48000;
-            // Sweep log-spaced frequencies (24 points/octave from 20-20kHz) to catch narrow peaks
             for (let f = 20; f <= 20000; f *= Math.pow(2, 1 / 24)) {
                 let sum = 0;
-                for (const b of enabledBands) {
-                    sum += this._biquadResponseDb(f, b, sr);
-                }
+                for (const b of enabledBands) sum += this._biquadResponseDb(f, b, SAMPLE_RATE);
                 if (sum > cumulativePeak) cumulativePeak = sum;
             }
         }
@@ -1243,11 +529,8 @@ class AudioContextManager {
               ? -Math.round(cumulativePeak * 10) / 10
               : 0;
 
-        // Sort bands by frequency so index order is deterministic
         const sortedBands = [...enabledBands].sort((a, b) => a.freq - b.freq);
-
-        // Build normalized band descriptor arrays, pad if fewer enabled bands than minimum
-        const maxFreq = (this.audioContext?.sampleRate ?? 48000) / 2 - 1;
+        const maxFreq = SAMPLE_RATE / 2 - 1;
         const slicedBands = sortedBands.slice(0, count);
         const newFrequencies = slicedBands.map((b) => Math.round(Math.min(b.freq, maxFreq)));
         const newTypes = slicedBands.map((b) => b.type || 'peaking');
@@ -1263,77 +546,25 @@ class AudioContextManager {
             newChannels.push('stereo');
         }
 
-        // Update band count via class setter to trigger equalizer-band-count-changed event
-        if (count !== this.bandCount) {
-            this.setBandCount(count);
-        }
+        // Through the setter, so the band-count event fires for the UI.
+        if (count !== this.bandCount) this.setBandCount(count);
 
-        // Override frequencies, types, Qs, and channels with band-specific values
         this.frequencies = newFrequencies;
         this.currentTypes = newTypes;
         this.currentQs = newQs;
         this.currentGains = newGains;
         this.currentChannels = newChannels;
+        this.msEnabled = newChannels.some((ch) => ch === 'mid' || ch === 'side');
 
-        // Determine if M/S processing is needed
-        const needsMS = newChannels.some((ch) => ch === 'mid' || ch === 'side');
-        const msChanged = needsMS !== this.msEnabled;
-        this.msEnabled = needsMS;
+        if (!skipPreamp) this.setPreamp(preamp);
 
-        if (this.isInitialized && this.audioContext) {
-            const needsRebuild =
-                msChanged || this.filters.length !== count || (needsMS && this.midFilters.length !== count);
-
-            if (needsRebuild) {
-                // M/S state changed or band count changed - full rebuild
-                this._destroyMSFilters();
-                this._destroyEQ();
-                this._createEQ();
-                if (needsMS) {
-                    this._createMSFilters();
-                }
-                this._connectGraph();
-            } else if (needsMS) {
-                // M/S active - update both parallel chains in-place
-                const now = this.audioContext.currentTime;
-
-                // Update main filters (not connected in M/S mode, kept in sync for stereo fallback)
-                this._updateFilterChain(this.filters, newFrequencies, newTypes, newQs, newGains, now);
-
-                // Update mid filters (gain = 0 for side-only bands)
-                const midGains = newGains.map((g, i) => (newChannels[i] === 'side' ? 0 : g));
-                this._updateFilterChain(this.midFilters, newFrequencies, newTypes, newQs, midGains, now);
-
-                // Update side filters (gain = 0 for mid-only bands)
-                const sideGains = newGains.map((g, i) => (newChannels[i] === 'mid' ? 0 : g));
-                this._updateFilterChain(this.sideFilters, newFrequencies, newTypes, newQs, sideGains, now);
-            } else if (this.filters.length === count) {
-                // Normal stereo - update in-place
-                const now = this.audioContext.currentTime;
-                this._updateFilterChain(this.filters, newFrequencies, newTypes, newQs, newGains, now);
-            } else {
-                // Band count changed - must rebuild
-                this._destroyMSFilters();
-                this._destroyEQ();
-                this._createEQ();
-                if (this.msEnabled) this._createMSFilters();
-                this._connectGraph();
-            }
-        }
-
-        // Apply preamp (skip if caller manages preamp externally)
-        if (!skipPreamp) {
-            this.setPreamp(preamp);
-        }
-
-        // Persist normalized band descriptors to settings store
         equalizerSettings.setCustomFrequencies(this.frequencies);
         equalizerSettings.setGains(this.currentGains);
         equalizerSettings.setBandTypes(this.currentTypes);
         equalizerSettings.setBandQs(this.currentQs);
         equalizerSettings.setBandChannels(this.currentChannels);
+        this.scheduleDspPush();
 
-        // Generate export text using the actual applied preamp value
         const lines = [`Preamp: ${this.preamp.toFixed(1)} dB`];
         sortedBands.forEach((band, index) => {
             if (index >= count) return;
@@ -1342,38 +573,24 @@ class AudioContextManager {
                 `Filter ${index + 1}: ON ${filterType} Fc ${newFrequencies[index]} Hz Gain ${newGains[index].toFixed(1)} dB Q ${newQs[index].toFixed(2)}`
             );
         });
-
         return lines.join('\n');
     }
 
-    /**
-     * Export equalizer settings to text format
-     * @returns {string} Exported settings in text format
-     */
     exportEQToText() {
-        const lines = [];
-        const preampValue = this.getPreamp();
-        lines.push(`Preamp: ${preampValue.toFixed(1)} dB`);
-
+        const lines = [`Preamp: ${this.getPreamp().toFixed(1)} dB`];
         this.frequencies.forEach((freq, index) => {
             const gain = this.currentGains[index] || 0;
             const type = (this.currentTypes && this.currentTypes[index]) || 'peaking';
             const filterType = type === 'lowshelf' ? 'LSC' : type === 'highshelf' ? 'HSC' : 'PK';
             const q = this.currentQs && this.currentQs[index] > 0 ? this.currentQs[index] : this._calculateQ(index);
-            const filterNum = index + 1;
             lines.push(
-                `Filter ${filterNum}: ON ${filterType} Fc ${freq} Hz Gain ${gain.toFixed(1)} dB Q ${q.toFixed(2)}`
+                `Filter ${index + 1}: ON ${filterType} Fc ${freq} Hz Gain ${gain.toFixed(1)} dB Q ${q.toFixed(2)}`
             );
         });
-
         return lines.join('\n');
     }
 
-    /**
-     * Import equalizer settings from text format
-     * @param {string} text - Text format settings
-     * @returns {boolean} True if import was successful
-     */
+    /** @returns {boolean} true if the text held at least one filter */
     importEQFromText(text) {
         try {
             const lines = text
@@ -1384,23 +601,21 @@ class AudioContextManager {
             let preamp = 0;
 
             for (const line of lines) {
-                // Parse preamp
                 const preampMatch = line.match(/^Preamp:\s*([+-]?\d+\.?\d*)\s*dB$/i);
                 if (preampMatch) {
                     preamp = parseFloat(preampMatch[1]);
                     continue;
                 }
-
-                // Parse filter lines (handle "Filter:" and "Filter X:" formats)
                 const filterMatch = line.match(
                     /^Filter\s*\d*:\s*ON\s+(\w+)\s+Fc\s+(\d+)\s+Hz\s+Gain\s*([+-]?\d+\.?\d*)\s*dB(?:\s+Q\s+(\d+\.?\d*))?/i
                 );
                 if (filterMatch) {
-                    const type = filterMatch[1].toUpperCase();
-                    const freq = parseInt(filterMatch[2], 10);
-                    const gain = parseFloat(filterMatch[3]);
-                    const q = filterMatch[4] ? parseFloat(filterMatch[4]) : Math.SQRT1_2;
-                    filters.push({ type, freq, gain, q });
+                    filters.push({
+                        type: filterMatch[1].toUpperCase(),
+                        freq: parseInt(filterMatch[2], 10),
+                        gain: parseFloat(filterMatch[3]),
+                        q: filterMatch[4] ? parseFloat(filterMatch[4]) : Math.SQRT1_2,
+                    });
                 }
             }
 
@@ -1409,19 +624,13 @@ class AudioContextManager {
                 return false;
             }
 
-            // Apply preamp
             this.setPreamp(preamp);
-
-            // If different number of bands, adjust
             const newCount = Math.max(
                 equalizerSettings.MIN_BANDS,
                 Math.min(equalizerSettings.MAX_BANDS, filters.length)
             );
-            if (newCount !== this.bandCount) {
-                this.setBandCount(newCount);
-            }
+            if (newCount !== this.bandCount) this.setBandCount(newCount);
 
-            // Apply per-band frequencies, types, Qs, and gains from import
             const sliced = filters.slice(0, this.bandCount);
             const typeMap = {
                 PK: 'peaking',
@@ -1432,8 +641,6 @@ class AudioContextManager {
                 HSC: 'highshelf',
                 HSF: 'highshelf',
             };
-
-            // Pad arrays to bandCount if import has fewer filters than minimum
             const padCount = this.bandCount - sliced.length;
             const freqs = sliced.map((f) => f.freq);
             const types = sliced.map((f) => typeMap[f.type] || 'peaking');
@@ -1441,10 +648,9 @@ class AudioContextManager {
             const gains = sliced.map((f) => this._clampGain(f.gain));
             if (padCount > 0) {
                 const lastFreq = freqs[freqs.length - 1] || 1000;
-                const maxFreq = (this.audioContext?.sampleRate ?? 48000) / 2 - 1;
+                const maxFreq = SAMPLE_RATE / 2 - 1;
                 for (let p = 0; p < padCount; p++) {
-                    const padFreq = Math.min(lastFreq * Math.pow(2, p + 1), maxFreq);
-                    freqs.push(Math.round(padFreq));
+                    freqs.push(Math.round(Math.min(lastFreq * Math.pow(2, p + 1), maxFreq)));
                     types.push('peaking');
                     qs.push(this._calculateQ(freqs.length - 1));
                     gains.push(0);
@@ -1455,27 +661,16 @@ class AudioContextManager {
             this.currentTypes = types;
             this.currentQs = qs;
             this.currentGains = gains;
-
-            // Reset M/S channel assignments - imported config has no channel info
+            // Imported text has no channel info.
             this.currentChannels = new Array(this.bandCount).fill('stereo');
             this.msEnabled = false;
 
-            // Rebuild EQ chain to apply new frequencies, types, and Qs
-            if (this.isInitialized && this.audioContext) {
-                this._destroyMSFilters();
-                this._destroyEQ();
-                this._createEQ();
-                if (this.msEnabled) this._createMSFilters();
-                this._connectGraph();
-            }
-
-            // Persist all band settings including custom frequencies
             equalizerSettings.setCustomFrequencies(this.frequencies);
             equalizerSettings.setGains(this.currentGains);
             equalizerSettings.setBandTypes(this.currentTypes);
             equalizerSettings.setBandQs(this.currentQs);
             equalizerSettings.setBandChannels(this.currentChannels);
-
+            this.scheduleDspPush();
             return true;
         } catch (e) {
             console.warn('[AudioContext] Failed to import EQ settings:', e);
@@ -1483,105 +678,39 @@ class AudioContextManager {
         }
     }
 
-    // ========================================
-    // Graphic EQ (16-band, independent chain)
-    // ========================================
-
-    _createGraphicEQ() {
-        if (!this.audioContext) return;
-        this.geqPreampNode = this.audioContext.createGain();
-        const gainValue = Math.pow(10, (this.geqPreamp || 0) / 20);
-        this.geqPreampNode.gain.value = gainValue;
-
-        this.geqOutputNode = this.audioContext.createGain();
-        this.geqOutputNode.gain.value = 1;
-
-        const geqQ = 2.5 * Math.sqrt(16 / this.geqBandCount);
-        this.geqFilters = this.geqFrequencies.map((freq, i) => {
-            const filter = this.audioContext.createBiquadFilter();
-            filter.type = 'peaking';
-            filter.frequency.value = freq;
-            filter.Q.value = geqQ;
-            filter.gain.value = this.geqGains[i] || 0;
-            return filter;
-        });
-    }
-
-    _destroyGraphicEQ() {
-        this.geqFilters.forEach((f) => {
-            try {
-                f.disconnect();
-            } catch {
-                /* */
-            }
-        });
-        this.geqFilters = [];
-        if (this.geqPreampNode) {
-            try {
-                this.geqPreampNode.disconnect();
-            } catch {
-                /* */
-            }
-            this.geqPreampNode = null;
-        }
-        if (this.geqOutputNode) {
-            try {
-                this.geqOutputNode.disconnect();
-            } catch {
-                /* */
-            }
-            this.geqOutputNode = null;
-        }
-    }
+    // ---- graphic EQ (its own chain after the parametric one) -------------------
 
     toggleGraphicEQ(enabled) {
         this.isGraphicEQEnabled = enabled;
         equalizerSettings.setGraphicEqEnabled(enabled);
-        if (this.isInitialized) {
-            this._connectGraph();
-        }
+        this.scheduleDspPush();
     }
 
     setGraphicEqBandGain(bandIndex, gainDb) {
         if (bandIndex < 0 || bandIndex >= this.geqBandCount) return;
         this.geqGains[bandIndex] = Math.max(-30, Math.min(30, gainDb));
-        if (this.geqFilters[bandIndex] && this.audioContext) {
-            const now = this.audioContext.currentTime;
-            this.geqFilters[bandIndex].gain.setTargetAtTime(this.geqGains[bandIndex], now, 0.01);
-        }
         equalizerSettings.setGraphicEqGains([...this.geqGains]);
+        this.scheduleDspPush();
     }
 
     setGraphicEqAllGains(gains) {
         if (!Array.isArray(gains)) return;
-        const now = this.audioContext?.currentTime || 0;
         gains.forEach((g, i) => {
-            if (i >= this.geqBandCount) return;
-            this.geqGains[i] = Math.max(-30, Math.min(30, g));
-            if (this.geqFilters[i]) {
-                this.geqFilters[i].gain.setTargetAtTime(this.geqGains[i], now, 0.01);
-            }
+            if (i < this.geqBandCount) this.geqGains[i] = Math.max(-30, Math.min(30, g));
         });
         equalizerSettings.setGraphicEqGains([...this.geqGains]);
+        this.scheduleDspPush();
     }
 
     setGraphicEqBandCount(count) {
         const newCount = Math.max(3, Math.min(32, parseInt(count, 10) || 16));
         if (newCount === this.geqBandCount) return;
-
-        const oldGains = this.geqGains;
+        this.geqGains = equalizerSettings.interpolateGains(this.geqGains, newCount);
         this.geqBandCount = newCount;
         this.geqFrequencies = generateFrequencies(newCount, this.geqFreqRange.min, this.geqFreqRange.max);
-        this.geqGains = equalizerSettings.interpolateGains(oldGains, newCount);
-
         equalizerSettings.setGraphicEqBandCount(newCount);
         equalizerSettings.setGraphicEqGains(this.geqGains);
-
-        if (this.isInitialized && this.audioContext) {
-            this._destroyGraphicEQ();
-            this._createGraphicEQ();
-            this._connectGraph();
-        }
+        this.scheduleDspPush();
     }
 
     setGraphicEqFreqRange(minFreq, maxFreq) {
@@ -1589,17 +718,10 @@ class AudioContextManager {
         const newMax = Math.max(10, Math.min(96000, parseInt(maxFreq, 10) || 20000));
         if (newMin >= newMax) return;
         if (newMin === this.geqFreqRange.min && newMax === this.geqFreqRange.max) return;
-
         this.geqFreqRange = { min: newMin, max: newMax };
         this.geqFrequencies = generateFrequencies(this.geqBandCount, newMin, newMax);
-
         equalizerSettings.setGraphicEqFreqRange(newMin, newMax);
-
-        if (this.isInitialized && this.audioContext) {
-            this._destroyGraphicEQ();
-            this._createGraphicEQ();
-            this._connectGraph();
-        }
+        this.scheduleDspPush();
     }
 
     getGraphicEqFrequencies() {
@@ -1612,19 +734,14 @@ class AudioContextManager {
 
     setGraphicEqPreamp(db) {
         this.geqPreamp = Math.max(-20, Math.min(20, parseFloat(db) || 0));
-        if (this.geqPreampNode && this.audioContext) {
-            const gainValue = Math.pow(10, this.geqPreamp / 20);
-            const now = this.audioContext.currentTime;
-            this.geqPreampNode.gain.setTargetAtTime(gainValue, now, 0.01);
-        }
         equalizerSettings.setGraphicEqPreamp(this.geqPreamp);
+        this.scheduleDspPush();
     }
 }
 
-// Export singleton instance
 export const audioContextManager = new AudioContextManager();
 
-// Export presets and helper functions for settings UI
+// Presets and helpers for the settings UI
 export {
     EQ_PRESETS,
     generateFrequencies,

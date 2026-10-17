@@ -35,6 +35,7 @@ import { UIRenderer } from './ui.js';
 import { createBridge, parseError, PLAYER_EVENTS, SKIP } from './player-bridge.js';
 import { PlayerMirror, isPlayableTrack, toTrackInput } from './player-mirror.js';
 import { RemoteMediaElement } from './remote-media.js';
+import { audioContextManager } from './audio-context.js';
 import { buildSettingsPatch, clampSpeed, modeToRepeat, repeatToMode } from './player-settings.js';
 
 const SETTINGS_SOURCES = {
@@ -156,6 +157,8 @@ export class Player {
         this.bridge ??= await createBridge();
         this.isNative = this.bridge.kind === 'tauri';
         await this._attach();
+        // EQ, mono and binaural edits in settings go to Rust as DspConfig.
+        audioContextManager.setDspSink((config) => this.setDsp(config));
 
         window.addEventListener('content-blocking-changed', () => this.pushSettings({ blocklist: true }));
         if (import.meta.env?.DEV) window.volnaPlayer = this;
@@ -879,12 +882,21 @@ export class Player {
      * Sends the settings the UI owns (§3.2). Called by the settings handlers
      * after they updated localStorage. `only` limits the patch to some keys.
      */
-    async pushSettings(only = null) {
+    pushSettings(only = null) {
         const full = buildSettingsPatch(SETTINGS_SOURCES, { quality: this.quality });
         const patch = only ? Object.fromEntries(Object.keys(only).map((k) => [k, full[k]])) : full;
-        const settings = await this._cmd('player_set_settings', { patch });
-        if (settings) this.settings = settings;
-        return settings;
+        // Merged with anything not sent yet, so a dragged slider sends one patch per round trip.
+        this._pendingPatch = { ...this._pendingPatch, ...patch };
+        this._patchPromise ??= this._cmd('player_set_settings', () => {
+            const next = this._pendingPatch;
+            this._pendingPatch = null;
+            this._patchPromise = null;
+            return { patch: next };
+        }).then((settings) => {
+            if (settings) this.settings = settings;
+            return settings;
+        });
+        return this._patchPromise;
     }
 
     applyReplayGain() {

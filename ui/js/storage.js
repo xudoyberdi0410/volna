@@ -3249,8 +3249,14 @@ export const contentBlockingSettings = {
         }
     },
 
+    // The native player skips blocked tracks too (js/player.js listens).
+    _changed() {
+        window.dispatchEvent(new CustomEvent('content-blocking-changed'));
+    },
+
     setBlockedArtists(artists) {
         localStorage.setItem(this.BLOCKED_ARTISTS_KEY, JSON.stringify(artists));
+        this._changed();
     },
 
     isArtistBlocked(artistId) {
@@ -3288,6 +3294,7 @@ export const contentBlockingSettings = {
 
     setBlockedTracks(tracks) {
         localStorage.setItem(this.BLOCKED_TRACKS_KEY, JSON.stringify(tracks));
+        this._changed();
     },
 
     isTrackBlocked(trackId) {
@@ -3326,6 +3333,7 @@ export const contentBlockingSettings = {
 
     setBlockedAlbums(albums) {
         localStorage.setItem(this.BLOCKED_ALBUMS_KEY, JSON.stringify(albums));
+        this._changed();
     },
 
     isAlbumBlocked(albumId) {
@@ -3421,6 +3429,7 @@ export const contentBlockingSettings = {
         localStorage.removeItem(this.BLOCKED_ARTISTS_KEY);
         localStorage.removeItem(this.BLOCKED_TRACKS_KEY);
         localStorage.removeItem(this.BLOCKED_ALBUMS_KEY);
+        this._changed();
     },
 };
 

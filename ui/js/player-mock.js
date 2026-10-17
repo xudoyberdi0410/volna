@@ -591,6 +591,10 @@ export class MockEngine {
         return this.player_next();
     }
 
+    player_wave_requeue() {
+        return { rev: this.rev };
+    }
+
     player_visualizer_start({ channel, fps = 60 }) {
         this.player_visualizer_stop();
         const rate = Math.max(10, Math.min(60, fps));

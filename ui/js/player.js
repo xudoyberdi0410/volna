@@ -831,6 +831,11 @@ export class Player {
         return this._cmd('player_wave_dislike');
     }
 
+    /** The wave settings changed: Rust swaps the queued wave entries for fresh ones. */
+    waveRequeue() {
+        return this._mutate('player_wave_requeue');
+    }
+
     // ---- volume, effects, quality, settings ------------------------------------
 
     get userVolume() {

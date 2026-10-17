@@ -245,6 +245,7 @@ type JournalEntry =
 | `player_wave_start` | `{count?: number}` (default 5) | `{rev}` | `Wave::start`, replaces the queue (origin `wave`), plays index 0, continuation `wave`. `no_candidates: …` → the UI opens cold start. |
 | `player_wave_stop` | – | `null` | Continuation → `none`, `Wave::stop`. |
 | `player_wave_dislike` | – | `null` | Records Dislike for the current track (closing the play first so the skip is not counted twice), tops up, then `next`. |
+| `player_wave_requeue` | – | `{rev}` | The UI changed the wave settings (`wave_set_settings`) while the wave is active: same as a re-seed outcome (`requeue_wave`): drop the upcoming wave-origin entries and append `WaveRequeue{dropped, count:3}`. No-op when the wave is not active. |
 | `player_visualizer_start` | `{channel: Channel<ArrayBuffer>, fps: number}` | `null` | fps clamped 10..60. Replaces any previous subscription. |
 | `player_visualizer_stop` | – | `null` | |
 | `player_journal` | `{after: number}` | `JournalEntry[]` | Entries with seq > after, ascending, at most 1000 per call (call again until empty). |

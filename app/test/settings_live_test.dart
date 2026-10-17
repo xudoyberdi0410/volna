@@ -1,5 +1,5 @@
 /// The settings wrappers against a running daemon (its socket from
-/// `VOLNA_SOCKET` or the default); skipped when there is none. Read-only:
+/// `VOLNA_SOCKET` or the default), only with `VOLNA_LIVE=1`. Read-only:
 /// nothing is changed in the daemon's settings.
 library;
 
@@ -14,7 +14,10 @@ import 'package:volna/ipc/socket_transport.dart';
 
 void main() {
   final path = socketPath();
-  final running = !Platform.isWindows &&
+  // Opt-in, so a plain `flutter test` never talks to the user's own daemon.
+  final live = Platform.environment['VOLNA_LIVE'] == '1';
+  final running = live &&
+      !Platform.isWindows &&
       FileSystemEntity.typeSync(path) == FileSystemEntityType.unixDomainSock;
 
   test('settings commands', () async {
@@ -52,5 +55,5 @@ void main() {
     expect(acts.activities, isNotEmpty);
     final artists = await WaveSettingsApi(t).artistSearch('Kino');
     expect(artists, isNotEmpty);
-  }, skip: running ? false : 'no daemon socket at $path', timeout: const Timeout(Duration(minutes: 2)));
+  }, skip: running ? false : 'set VOLNA_LIVE=1 with a daemon socket at $path', timeout: const Timeout(Duration(minutes: 2)));
 }

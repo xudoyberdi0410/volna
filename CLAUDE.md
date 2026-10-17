@@ -43,6 +43,10 @@ VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome \
   привязанным к видео). Поэтому резолв идёт сначала через `player_client=web_music`, и нужен
   провайдер PO token: AUR `bgutil-ytdlp-pot-provider`, пользовательский сервис `bgutil-pot`
   на 127.0.0.1:4416.
+- Яндекс Музыка ходит напрямую, без прокси (с узбекского IP сервис доступен). Токен берётся
+  из сессии Яндекса в Chrome: yt-dlp выгружает cookies, `oauth.yandex.uz/authorize` сразу
+  отдаёт токен (сессия на `.yandex.uz`, не `.ru`). Живой тест:
+  `VOLNA_TEST_COOKIES=chrome cargo test -p volna yandex_live -- --ignored --nocapture`.
 - Тихий звук бывает из-за громкости потока, сохранённой в WirePlumber
   (`~/.local/state/wireplumber/stream-properties`), а не из-за кода.
 

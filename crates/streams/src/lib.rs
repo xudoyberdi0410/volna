@@ -1,4 +1,5 @@
-//! Audio stream resolution via a yt-dlp sidecar.
+//! Audio stream resolution: a yt-dlp sidecar (feature `ytdlp`, default)
+//! behind [`Backend`].
 //!
 //! Resolves a `videoId` to a googlevideo audio URL (through the same proxy
 //! as everything else, since the URLs are IP-bound), caches results until
@@ -8,6 +9,7 @@
 //! on-disk cache and handles yt-dlp self-updates.
 //!
 //! ```no_run
+//! # #[cfg(feature = "ytdlp")]
 //! # async fn demo() -> volna_streams::Result<()> {
 //! use std::sync::Arc;
 //! use volna_net::{NetManager, NetOptions};
@@ -29,20 +31,22 @@
 
 mod error;
 pub mod image;
+mod model;
 pub mod range;
 mod resolver;
 mod server;
 mod stream;
+#[cfg(feature = "ytdlp")]
 pub mod ytdlp;
 
 pub use error::{FailureKind, Result, StreamError};
 pub use image::{Image, ImageCache};
+pub use model::{Codec, Delivery, Quality, ResolvedStream, Tier, VideoId};
 pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Failure, Resolver};
 pub use server::LoopbackServer;
 pub use stream::{
     BodyStream, DEFAULT_CHUNK_CAP, Network, OpenStream, StreamRequest, StreamResponse,
     StreamService,
 };
-pub use ytdlp::{
-    COOKIE_BROWSERS, Cookies, Origin, Quality, ResolvedStream, UpdateReport, VideoId, YtDlp,
-};
+#[cfg(feature = "ytdlp")]
+pub use ytdlp::{COOKIE_BROWSERS, Cookies, Origin, UpdateReport, YtDlp};

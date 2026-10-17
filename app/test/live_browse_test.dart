@@ -18,6 +18,7 @@ import 'package:volna/ipc/proto_image.dart';
 import 'package:volna/ipc/socket_transport.dart';
 import 'package:volna/state/connection.dart';
 import 'package:volna/ui/browse/routes.dart';
+import 'package:volna/ui/widgets/cards.dart';
 import 'package:volna/ui/widgets/cover.dart';
 import 'package:volna/ui/widgets/track_row.dart';
 
@@ -42,7 +43,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
         if (done()) return;
       }
-      fail('timed out waiting for ${what ?? 'the screen'}');
+      final texts = find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().take(30);
+      fail('timed out waiting for ${what ?? 'the screen'}; transport ${t.status}; on screen: ${texts.join(' | ')}');
     }
 
     Future<void> shot(String name) async {
@@ -58,7 +60,7 @@ void main() {
         final data = await img.toByteData(format: ui.ImageByteFormat.png);
         return data!.buffer.asUint8List();
       });
-      await File('$shots/$name.png').writeAsBytes(bytes!);
+      await tester.runAsync(() => File('$shots/$name.png').writeAsBytes(bytes!));
     }
 
     await tester.pumpWidget(RepaintBoundary(
@@ -78,18 +80,19 @@ void main() {
     ));
 
     // Search, then open the first album.
-    await wait(() => find.text('Альбомы').evaluate().length > 1, what: 'search results');
+    await wait(() => find.text('Лучший результат').evaluate().isNotEmpty || find.byType(TrackRow).evaluate().isNotEmpty,
+        what: 'search results');
     await shot('live_search');
     await tester.tap(find.widgetWithText(ChoiceChip, 'Альбомы'));
-    await wait(() => find.textContaining('Discovery').evaluate().isNotEmpty, what: 'album results');
-    await tester.tap(find.textContaining('Discovery').first);
+    await wait(() => find.byType(ItemCard).evaluate().isNotEmpty, what: 'album results');
+    await tester.tap(find.byType(ItemCard).first);
     await wait(() => find.text('Слушать').evaluate().isNotEmpty && find.byType(TrackRow).evaluate().length > 3,
         what: 'the album page');
     expect(router.state.uri.path, startsWith('/album/MPRE'));
     await shot('live_album');
 
     // Muted: the test daemon must not make noise.
-    await t.call('player_set_settings', {'patch': {'muted': true}});
+    await tester.runAsync(() => t.call('player_set_settings', {'patch': {'muted': true}}));
     final row = tester.widget<TrackRow>(find.byType(TrackRow).at(1));
     await tester.tap(find.byType(TrackRow).at(1));
     await wait(() => true, seconds: 2);

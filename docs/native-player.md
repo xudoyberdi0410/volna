@@ -382,10 +382,12 @@ crates/player/
   pulsesink/pipewiresink gets `stream-properties` `media.role=Music,application.name=Volna,application.icon-name=volna,node.name=volna`.
   The `audio-filter` bin is
   `scaletempo (only when preservePitch && speed≠1) ! audioconvert ! audioresample ! capsfilter audio/x-raw,format=F32LE,layout=interleaved,channels=2,rate=48000 ! volnadsp ! volume name=fade ! volume name=master`.
+  As built: `audioconvert ! scaletempo (whenever preservePitch; passthrough at 1×) ! audioconvert ! audioresample ! capsfilter ! volnadsp`,
+  with the fade (sample-accurate ramps) and the smoothed master gain inside `volnadsp`, after the analysis tap.
   `master` = curve(volume) × (muted?0:1). `fade` is for crossfade, sleep fade and a 30 ms
   de-click on manual skip/pause. Changing preservePitch rebuilds the bin when the next track
   loads, or right away by reloading at the current position.
-- **Load:** `uri = hooks.stream_uri(track, quality)`, deck → PAUSED (preroll, 20 s timeout →
+- **Load:** `uri = hooks.stream_uri(track, quality)`, deck → PAUSED (preroll, 45 s timeout →
   failure `timeout`), then seek if a start position is set, → PLAYING. Position = `query_position`
   of the playbin (sink-latency aware, good for lyrics). Duration = `query_duration`, else
   `track.duration`.
@@ -511,6 +513,12 @@ src-tauri/src/player/visualizer.rs Channel subscription: enables the analysis fl
     `WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?.build()`. The label stays
     `main`, so the capability and the `volna-stream` init script apply. The page boots and runs §3.6.
 - **Single instance:** `tauri-plugin-single-instance` → `show_or_create` on a second launch.
+  `VOLNA_MULTI_INSTANCE=1` skips it so dev and test copies can run next to an installed
+  Volna; MPRIS then falls back to `org.mpris.MediaPlayer2.volna.instance<pid>`.
+- **WebKit processes (as built):** WebKitGTK keeps a closed page's WebProcess in its process
+  cache and the NetworkProcess with the web context. Close therefore calls
+  `webkit_web_view_terminate_web_process` before `destroy()`, and 2 s later, with no window
+  left, ends our `WebKitNetworkProcess` child; WebKit starts new ones for the next window.
 - **GStreamer init:** `volna_player::init_gstreamer()` early in `setup`. On failure, log and run
   without a player (commands return `unavailable:`).
 
@@ -523,7 +531,8 @@ src-tauri/src/player/visualizer.rs Channel subscription: enables the analysis fl
 - Linux runtime: GStreamer base (playback, audioconvert, audioresample, volume, typefind, opus),
   good (soup, matroska, isomp4, autodetect, pulse, audiofx/scaletempo), libav (AAC fallback).
   The deb already depends on base/good and recommends libav; PKGBUILD already depends on
-  base/good/libav. Add `libayatana-appindicator` (tray) to PKGBUILD and deb depends. Bump `pkgrel`.
+  base/good/libav. The Linux tray is `ksni` (pure D-Bus), so no `libayatana-appindicator` is needed;
+  PKGBUILD adds `gstreamer` and bumps `pkgrel`.
   AppImage keeps `bundleMediaFramework: true`.
 - Windows (secondary, must not block Linux): CI installs the GStreamer MSVC runtime + devel MSIs
   (pkg-config for gstreamer-rs). The installer either chains the official runtime MSI silently

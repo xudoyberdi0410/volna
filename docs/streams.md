@@ -1,5 +1,9 @@
 # Playback path (phase 2)
 
+> Since the native player (`docs/native-player.md`), the consumer of the loopback server is
+> a GStreamer `playbin3` deck in Rust (`crates/player`), not `<audio>`; the URL format and the
+> resolve/Range/re-resolve behaviour below are unchanged.
+
 ## What `<audio>` must use
 
 WebKitGTK (checked on 2.54.1) plays media through GStreamer, and its source element only

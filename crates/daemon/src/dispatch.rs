@@ -68,6 +68,17 @@ pub async fn call(d: &std::sync::Arc<Daemon>, cmd: &str, a: &Value) -> Result<Va
         "wave_stop" => out(wave::wave_stop(w).await),
         "wave_event" => out(wave::wave_event(w, arg(a, "event")?).await),
         "wave_sync_likes" => out(wave::wave_sync_likes(w, arg(a, "tracks")?).await),
+        "yandex_status" => out(d.yandex.status().await),
+        "yandex_set_token" => out(d.yandex.set_token_input(&arg::<String>(a, "token")?).await),
+        "yandex_import_start" => {
+            let options = match a {
+                Value::Null => Default::default(),
+                a => serde_json::from_value(a.clone()).map_err(|e| format!("invalid args: {e}"))?,
+            };
+            d.yandex.start(d.app.api.ytm(), d.emitter(), options)?;
+            Ok(serde_json::json!({ "started": true }))
+        }
+        "yandex_import_cancel" => out(Ok(d.yandex.cancel())),
         "app_quit" => {
             d.quit();
             Ok(Value::Null)

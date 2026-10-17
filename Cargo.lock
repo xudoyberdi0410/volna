@@ -4778,6 +4778,8 @@ dependencies = [
  "base64 0.22.1",
  "dirs",
  "http",
+ "icu_normalizer",
+ "icu_properties",
  "ksni",
  "mimalloc",
  "mpris-server",

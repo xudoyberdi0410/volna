@@ -89,6 +89,7 @@ pub struct Daemon {
     pub net: NetworkState,
     pub wave: WaveState,
     pub player: PlayerState,
+    pub yandex: Arc<crate::api::yandex::YandexState>,
     window: WindowLink,
     child: Mutex<Option<std::process::Child>>,
     quitting: AtomicBool,
@@ -132,6 +133,12 @@ fn window_exe() -> PathBuf {
 impl Daemon {
     pub fn has_window(&self) -> bool {
         self.window.connected()
+    }
+
+    /// An event sender for background jobs (`api::*`); silent without a window.
+    pub fn emitter(self: &Arc<Self>) -> crate::api::yandex::Emit {
+        let sink = Sink(Arc::downgrade(self));
+        Arc::new(move |name, payload| sink.emit(name, payload))
     }
 
     /// One visualizer frame to the window; false when there is none.
@@ -295,11 +302,13 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
     let net = NetworkState::new(SettingsStore::new(&dirs.config));
     let wave = WaveState::open(&dirs.data, app.api.ytm())?;
     let player = player::setup(&dirs.data, &dirs.config, &app, &wave);
+    let yandex = crate::api::yandex::desktop_state(&app, &dirs.cache);
     let daemon = Arc::new(Daemon {
         app,
         net,
         wave,
         player,
+        yandex,
         window: WindowLink::default(),
         child: Mutex::new(None),
         quitting: AtomicBool::new(false),

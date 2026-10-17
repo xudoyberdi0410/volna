@@ -3,7 +3,8 @@
 //! - `client`: the token and the library through the music API (direct, no proxy);
 //! - `browser`: desktop only, the token from the browser's Yandex session via yt-dlp;
 //! - `matching`: a Yandex track → the YouTube Music one (port of `ui/js/yandex-import.js`);
-//! - `import`: matching the whole library and saving it through [`LibrarySink`].
+//! - `import`: matching the whole library and saving it through [`LibrarySink`];
+//! - `library_sink`: [`LibrarySink`] for `api::library::Library`.
 //!
 //! Commands (camelCase args): `yandex_status`, `yandex_set_token{token}`,
 //! `yandex_import_start{likes?,playlists?,albums?,artists?,browser?}`,
@@ -14,6 +15,7 @@
 pub mod browser;
 pub mod client;
 pub mod import;
+mod library_sink;
 pub mod matching;
 
 use std::future::Future;
@@ -313,45 +315,19 @@ fn upstream(e: String) -> String {
     format!("upstream: {e}")
 }
 
-/// The sink until `api/library.rs` is merged: every write fails, so an
-/// import reports the save error instead of losing matches silently.
-pub struct UnwiredLibrary;
-
-impl LibrarySink for UnwiredLibrary {
-    fn like_track(&self, _: &volna_ytm::Track, _: i64) -> anyhow::Result<bool> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn like_album(&self, _: &volna_ytm::AlbumSummary) -> anyhow::Result<bool> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn like_artist(&self, _: &volna_ytm::ArtistSummary) -> anyhow::Result<bool> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn imported_playlist(&self, _: &str, _: &str) -> anyhow::Result<Option<String>> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn create_playlist(&self, _: &str, _: &str, _: &str) -> anyhow::Result<String> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn add_to_playlist(&self, _: &str, _: &[volna_ytm::Track]) -> anyhow::Result<()> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn playlist_track_ids(&self, _: &str) -> anyhow::Result<Vec<String>> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-    fn reorder_playlist(&self, _: &str, _: &[String]) -> anyhow::Result<()> {
-        anyhow::bail!("библиотека ещё не подключена")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use matching::tests::FakeCatalog;
 
+    fn memory_library() -> Arc<dyn LibrarySink> {
+        let store = crate::api::library::Store::open_in_memory().unwrap();
+        Arc::new(crate::api::library::Library::new(store, None))
+    }
+
     #[tokio::test]
     async fn without_a_token_the_import_asks_for_login() {
-        let state = Arc::new(YandexState::new(Arc::new(UnwiredLibrary), None));
+        let state = Arc::new(YandexState::new(memory_library(), None));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let emit: Emit = Arc::new(move |name, payload| {
             let _ = tx.send((name.to_owned(), payload));
@@ -371,7 +347,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pasted_line_without_a_token_is_refused() {
-        let state = YandexState::new(Arc::new(UnwiredLibrary), None);
+        let state = YandexState::new(memory_library(), None);
         assert!(state.set_token_input("hello world").await.is_err());
         assert_eq!(state.token(), None);
     }

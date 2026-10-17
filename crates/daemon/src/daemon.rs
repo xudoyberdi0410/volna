@@ -12,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 use volna_streams::LoopbackServer;
 
+use crate::api::library::Library;
 use crate::ipc::{self, Frame, Msg, Role};
 use crate::network::NetworkState;
 use crate::player::{self, PlayerState, forward::EventSink};
@@ -88,6 +89,7 @@ pub struct Daemon {
     pub app: AppState,
     pub net: NetworkState,
     pub wave: WaveState,
+    pub library: Arc<Library>,
     pub player: PlayerState,
     pub yandex: Arc<crate::api::yandex::YandexState>,
     window: WindowLink,
@@ -301,12 +303,14 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
     }
     let net = NetworkState::new(SettingsStore::new(&dirs.config));
     let wave = WaveState::open(&dirs.data, app.api.ytm())?;
-    let player = player::setup(&dirs.data, &dirs.config, &app, &wave);
-    let yandex = crate::api::yandex::desktop_state(&app, &dirs.cache);
+    let library = Arc::new(Library::open(&dirs.data, Some(wave.engine()))?);
+    let player = player::setup(&dirs.data, &dirs.config, &app, &wave, &library);
+    let yandex = crate::api::yandex::desktop_state(&app, &dirs.cache, library.clone());
     let daemon = Arc::new(Daemon {
         app,
         net,
         wave,
+        library,
         player,
         yandex,
         window: WindowLink::default(),
@@ -318,12 +322,17 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
         let d = daemon.clone();
         tokio::spawn(async move { d.net.restore(&d.app).await });
     }
+    let sink: Arc<dyn EventSink> = Arc::new(Sink(Arc::downgrade(&daemon)));
+    {
+        let sink = sink.clone();
+        daemon.library.set_listener(move |name, payload| {
+            if sink.connected() {
+                sink.emit(name, payload);
+            }
+        });
+    }
     let handle = daemon.player.handle_opt().cloned();
-    player::forward::start(
-        Arc::new(Sink(Arc::downgrade(&daemon))),
-        handle.clone(),
-        &daemon.player.journal,
-    );
+    player::forward::start(sink, handle.clone(), &daemon.player.journal);
     player::tray::start(daemon.clone(), handle.clone());
     #[cfg(target_os = "linux")]
     if let Some(h) = handle {

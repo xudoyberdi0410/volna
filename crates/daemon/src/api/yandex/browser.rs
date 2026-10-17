@@ -8,12 +8,14 @@ use std::sync::Arc;
 use volna_streams::YtDlp;
 
 use super::client::token_from_cookies;
-use super::{TokenSource, UnwiredLibrary, YandexState};
+use super::{TokenSource, YandexState};
+use crate::api::library::Library;
 use crate::state::AppState;
 
 /// The daemon's Yandex state: the browser session through the app's yt-dlp
-/// (with the cookies source from Settings → «Сеть»), the jar dumped to `cache_dir`.
-pub fn desktop_state(app: &AppState, cache_dir: &Path) -> Arc<YandexState> {
+/// (with the cookies source from Settings → «Сеть»), the jar dumped to
+/// `cache_dir`; matches go into `library`.
+pub fn desktop_state(app: &AppState, cache_dir: &Path, library: Arc<Library>) -> Arc<YandexState> {
     let browser: Option<TokenSource> = app.streams.clone().map(|streams| {
         let dir = cache_dir.to_owned();
         let source: TokenSource = Arc::new(move || {
@@ -22,8 +24,7 @@ pub fn desktop_state(app: &AppState, cache_dir: &Path) -> Arc<YandexState> {
         });
         source
     });
-    // TODO(library merge): the SQLite library from `api/library.rs`.
-    Arc::new(YandexState::new(Arc::new(UnwiredLibrary), browser))
+    Arc::new(YandexState::new(library, browser))
 }
 
 /// A token, or `None` (no browser set, not signed in there, cookies unreadable).

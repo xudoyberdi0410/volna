@@ -18,6 +18,7 @@ use crate::daemon::Daemon;
 
 pub mod catalog;
 pub mod color;
+pub mod library;
 pub mod lyrics;
 pub mod yandex;
 
@@ -27,6 +28,9 @@ pub async fn call(d: &Arc<Daemon>, cmd: &str, a: &Value) -> Option<Result<Value,
         return Some(r);
     }
     if let Some(r) = color::call(&d.app.palettes, &d.app.images, cmd, a).await {
+        return Some(r);
+    }
+    if let Some(r) = library::call(&d.library, cmd, a).await {
         return Some(r);
     }
     if let Some(r) = lyrics::call(d, cmd, a).await {

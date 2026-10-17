@@ -44,6 +44,10 @@ pub trait LibrarySink: Send + Sync {
     fn playlist_track_ids(&self, playlist: &str) -> anyhow::Result<Vec<String>>;
     /// Puts the playlist's tracks in this order (a permutation of its ids).
     fn reorder_playlist(&self, playlist: &str, video_ids: &[String]) -> anyhow::Result<()>;
+    /// After the last write: notify listeners, sync derived state.
+    fn finish(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// What to import; everything by default.
@@ -305,6 +309,7 @@ pub fn save(
         }
     }
     summary.playlists = save_playlists(sink, library, &matched.tracks)?;
+    sink.finish()?;
     Ok(summary)
 }
 

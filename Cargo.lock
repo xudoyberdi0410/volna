@@ -4109,6 +4109,7 @@ dependencies = [
  "volna-streams",
  "volna-wave",
  "volna-ytm",
+ "webkit2gtk",
 ]
 
 [[package]]

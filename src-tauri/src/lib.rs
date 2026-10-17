@@ -9,6 +9,7 @@ mod protocol;
 mod settings;
 mod state;
 mod wave;
+mod webview_memory;
 mod yandex;
 
 use tauri::Manager;
@@ -58,6 +59,7 @@ pub fn run() {
             app.manage(network);
             app.manage(wave);
             app.manage(yandex::YandexState::default());
+            webview_memory::apply(app.handle());
             // Restoring may start xray; the window does not wait for it.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

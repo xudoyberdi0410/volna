@@ -26,6 +26,8 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 base64 = "0.22"
 dirs = "7"
+# `color_palette`: decode covers (the formats `ImageCache` accepts).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 mimalloc = "0.1.52"
 volna-ytm = { workspace = true }
 volna-net = { workspace = true }

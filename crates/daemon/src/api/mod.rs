@@ -10,3 +10,4 @@
 //! `bad_args`, `not_found`, `upstream`, `internal`.
 
 pub mod catalog;
+pub mod color;

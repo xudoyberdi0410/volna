@@ -7,7 +7,8 @@
 
 - `ui/` — фронт (форк Monochrome, JS/Vite). `ui-upstream/` — нетронутый оригинал для сравнения.
 - `src-tauri/` — приложение: `protocol.rs` (схема `volna://`), `api_emu/` (эмуляция TIDAL
-  hifi-api, которую ждёт фронт), `network.rs` (настройки сети и cookies), `wave*.rs`.
+  hifi-api, которую ждёт фронт), `network.rs` (настройки сети и cookies), `wave*.rs`, `yandex.rs` (вход в Яндекс
+  и выгрузка библиотеки; сопоставление с YTM — `ui/js/yandex-import.js`).
 - `crates/ytm` — свой InnerTube-клиент YouTube Music (WEB_REMIX).
 - `crates/net` — reqwest-клиент с прокси (Direct / URL / VLESS через xray).
 - `crates/streams` — резолв аудио через yt-dlp и локальный аудиосервер с Range.

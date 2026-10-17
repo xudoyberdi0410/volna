@@ -2,7 +2,7 @@
 # Сборка: cd packaging/arch && makepkg -si
 pkgname=volna
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
 arch=('x86_64')
 license=('Apache-2.0')

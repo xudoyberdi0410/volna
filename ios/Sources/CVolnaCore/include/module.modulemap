@@ -1,0 +1,4 @@
+module CVolnaCore {
+    header "volna_core.h"
+    export *
+}

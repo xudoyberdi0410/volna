@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+.bsp/
+/Libs/
+/xtool/
+/Packages/
+*.ipa

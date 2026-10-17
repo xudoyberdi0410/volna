@@ -10,10 +10,10 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use serde_json::Value;
 
-use super::js::{
+use crate::error::{Result, StreamError};
+use crate::js::{
     self, JsRequest, JsRuntime, MintRequest, MintResponse, SnapshotRequest, SnapshotResponse,
 };
-use crate::error::{Result, StreamError};
 
 /// The web player's WAA request key.
 const REQUEST_KEY: &str = "O43z0dpjhgX20SCx4KAo";

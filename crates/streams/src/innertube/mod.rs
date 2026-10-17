@@ -18,7 +18,7 @@ mod cookies;
 #[cfg(feature = "innertube-deno")]
 mod deno;
 mod formats;
-pub mod js;
+
 mod player;
 mod pot;
 mod session;
@@ -28,10 +28,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
+pub use crate::js::{JsCallback, JsError, JsFuture, JsRequest, JsRuntime, PRELUDE};
 pub use cookies::{Cookie, CookieJar};
 #[cfg(feature = "innertube-deno")]
 pub use deno::DenoRuntime;
-pub use js::{JsCallback, JsError, JsFuture, JsRequest, JsRuntime, PRELUDE};
 
 use crate::error::{Result, StreamError};
 use crate::model::{Delivery, Quality, ResolvedStream, VideoId, url_expiry};

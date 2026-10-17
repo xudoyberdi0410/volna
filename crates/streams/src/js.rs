@@ -5,7 +5,7 @@
 //! signature challenges) and gates them with BotGuard (PO tokens). Rust does
 //! every HTTP request; only the JavaScript runs elsewhere: in the platform
 //! WebView on mobile (`evaluateJavaScript`), in Deno on desktop
-//! ([`DenoRuntime`](super::DenoRuntime), feature `innertube-deno`).
+//! (`innertube::DenoRuntime`, feature `innertube-deno`).
 //!
 //! A runtime loads [`PRELUDE`] once, then answers each request by evaluating
 //! `volnaJs(<request JSON>)` and returning the string that promise resolves
@@ -25,11 +25,11 @@ use serde::{Deserialize, Serialize};
 /// Volna's dispatcher with the BotGuard client (after BgUtils, MIT). It
 /// defines the global `volnaJs`. Licenses: `crates/streams/js/`.
 pub const PRELUDE: &str = concat!(
-    include_str!("../../js/ejs/yt.solver.lib.min.js"),
+    include_str!("../js/ejs/yt.solver.lib.min.js"),
     "\nObject.assign(globalThis, lib);\n",
-    include_str!("../../js/ejs/yt.solver.core.min.js"),
+    include_str!("../js/ejs/yt.solver.core.min.js"),
     "\nglobalThis.jsc = jsc;\n",
-    include_str!("../../js/volna.js"),
+    include_str!("../js/volna.js"),
 );
 
 /// Version `volnaJs({"op":"version"})` answers with; bumped when the

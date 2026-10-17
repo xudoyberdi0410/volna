@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, oneshot};
 
-use super::js::{JsError, JsFuture, JsRuntime, PRELUDE};
+use crate::js::{JsError, JsFuture, JsRuntime, PRELUDE};
 
 const HOST: &str = include_str!("../../js/deno_host.js");
 /// First start downloads jsdom; later calls are quick except the first

@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::js::{self, JsError, JsRequest, JsRuntime, SolveRequest, SolveResponse};
 use crate::error::{Result, StreamError};
+use crate::js::{self, JsError, JsRequest, JsRuntime, SolveRequest, SolveResponse};
 
 /// Players kept in memory (each is ~3 MB of JavaScript).
 const MAX_PLAYERS: usize = 2;
@@ -223,7 +223,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::innertube::js::JsCallback;
+    use crate::js::JsCallback;
     use std::sync::atomic::AtomicUsize;
 
     #[test]

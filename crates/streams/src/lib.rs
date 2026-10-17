@@ -34,6 +34,7 @@ mod error;
 pub mod image;
 #[cfg(feature = "innertube")]
 pub mod innertube;
+pub mod js;
 mod model;
 pub mod range;
 mod resolver;
@@ -47,7 +48,8 @@ pub use image::{Image, ImageCache};
 #[cfg(feature = "innertube-deno")]
 pub use innertube::DenoRuntime;
 #[cfg(feature = "innertube")]
-pub use innertube::{CookieJar, InnerTube, InnerTubeOptions, JsError, JsRuntime};
+pub use innertube::{CookieJar, InnerTube, InnerTubeOptions};
+pub use js::{JsError, JsRuntime};
 pub use model::{Codec, Delivery, Quality, ResolvedStream, Tier, VideoId};
 pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Failure, Resolver};
 pub use server::LoopbackServer;

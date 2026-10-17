@@ -22,4 +22,7 @@ arc-swap = "1.7"
 fastrand = "2.5"
 
 [dev-dependencies]
+gst = { package = "gstreamer", version = "0.25" }
+tokio = { workspace = true, features = ["full", "test-util"] }
 tempfile = "3"
+tracing-subscriber.workspace = true

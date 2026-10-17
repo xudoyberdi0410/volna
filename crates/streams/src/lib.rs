@@ -1,5 +1,6 @@
-//! Audio stream resolution: a yt-dlp sidecar (feature `ytdlp`, default)
-//! behind [`Backend`].
+//! Audio stream resolution: a yt-dlp sidecar (feature `ytdlp`, default) or
+//! in-process InnerTube with a host-provided JavaScript runtime (feature
+//! `innertube`, for mobile) behind [`Backend`].
 //!
 //! Resolves a `videoId` to a googlevideo audio URL (through the same proxy
 //! as everything else, since the URLs are IP-bound), caches results until
@@ -31,6 +32,8 @@
 
 mod error;
 pub mod image;
+#[cfg(feature = "innertube")]
+pub mod innertube;
 mod model;
 pub mod range;
 mod resolver;
@@ -41,6 +44,10 @@ pub mod ytdlp;
 
 pub use error::{FailureKind, Result, StreamError};
 pub use image::{Image, ImageCache};
+#[cfg(feature = "innertube-deno")]
+pub use innertube::DenoRuntime;
+#[cfg(feature = "innertube")]
+pub use innertube::{CookieJar, InnerTube, InnerTubeOptions, JsError, JsRuntime};
 pub use model::{Codec, Delivery, Quality, ResolvedStream, Tier, VideoId};
 pub use resolver::{Backend, DEFAULT_EXPIRY_MARGIN, Failure, Resolver};
 pub use server::LoopbackServer;

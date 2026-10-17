@@ -17,7 +17,7 @@ use volna_wave::{
 };
 use volna_ytm::{ArtistRef, Item, SearchFilter, Track, TrackKind, YtmClient};
 
-use crate::api_emu::shape::{self, TrackCtx};
+use crate::shape::{self, TrackCtx};
 
 type CmdResult<T> = Result<T, String>;
 

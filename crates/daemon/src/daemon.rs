@@ -10,39 +10,13 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
-use volna_streams::LoopbackServer;
+use volna_core::{Core, CoreConfig, StreamBackend};
 
-use crate::api::library::Library;
+pub use volna_core::{Dirs, IDENTIFIER};
+
+use crate::api_emu::ApiEmu;
 use crate::ipc::{self, Frame, Msg, Role};
-use crate::network::NetworkState;
-use crate::player::{self, PlayerState, forward::EventSink};
-use crate::settings::SettingsStore;
-use crate::state::AppState;
-use crate::wave::WaveState;
-
-/// The app identifier: the directory name under the XDG dirs (as Tauri used).
-pub const IDENTIFIER: &str = "uz.khudoberdi.volna";
-
-pub struct Dirs {
-    pub config: PathBuf,
-    pub data: PathBuf,
-    pub cache: PathBuf,
-}
-
-impl Dirs {
-    /// The same directories Tauri's `app_*_dir` gave the single-process app.
-    pub fn new() -> anyhow::Result<Self> {
-        let pick = |d: Option<PathBuf>, what: &str| {
-            d.map(|d| d.join(IDENTIFIER))
-                .ok_or_else(|| anyhow::anyhow!("no {what} directory"))
-        };
-        Ok(Self {
-            config: pick(dirs::config_dir(), "config")?,
-            data: pick(dirs::data_dir(), "data")?,
-            cache: pick(dirs::cache_dir(), "cache")?,
-        })
-    }
-}
+use crate::player::{self, forward::EventSink};
 
 /// The connected window process, if any.
 #[derive(Default)]
@@ -85,18 +59,22 @@ impl WindowLink {
     }
 }
 
+/// The core plus the desktop host around it. Derefs to [`Core`]
+/// (`d.app`, `d.player`, `d.library`, …).
 pub struct Daemon {
-    pub app: AppState,
-    pub net: NetworkState,
-    pub wave: WaveState,
-    pub library: Arc<Library>,
-    pub player: PlayerState,
-    /// Last.fm, Libre.fm, ListenBrainz, Maloja; off until configured.
-    pub scrobble: volna_scrobble::Scrobbling,
-    pub yandex: Arc<crate::api::yandex::YandexState>,
+    pub core: Arc<Core>,
+    /// `volna://api/` for the old webview UI.
+    pub api: Arc<ApiEmu>,
     window: WindowLink,
     child: Mutex<Option<std::process::Child>>,
     quitting: AtomicBool,
+}
+
+impl std::ops::Deref for Daemon {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.core
+    }
 }
 
 struct Sink(std::sync::Weak<Daemon>);
@@ -137,12 +115,6 @@ fn window_exe() -> PathBuf {
 impl Daemon {
     pub fn has_window(&self) -> bool {
         self.window.connected()
-    }
-
-    /// An event sender for background jobs (`api::*`); silent without a window.
-    pub fn emitter(self: &Arc<Self>) -> crate::api::yandex::Emit {
-        let sink = Sink(Arc::downgrade(self));
-        Arc::new(move |name, payload| sink.emit(name, payload))
     }
 
     /// One visualizer frame to the window; false when there is none.
@@ -208,14 +180,7 @@ impl Daemon {
         tokio::spawn(async move {
             tracing::info!("quitting");
             d.window.send(Msg::Quit.into());
-            if let Some(h) = d.player.handle_opt()
-                && tokio::time::timeout(Duration::from_secs(5), h.shutdown())
-                    .await
-                    .is_err()
-            {
-                tracing::warn!("player shutdown timed out");
-            }
-            d.app.net.shutdown().await;
+            d.core.shutdown().await;
             #[cfg(unix)]
             let _ = std::fs::remove_file(ipc::socket_path());
             // Give the window a moment to get the Quit frame.
@@ -286,64 +251,25 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
     }
     let listener = listen()?;
 
-    let dirs = Dirs::new()?;
-    let audio_server = LoopbackServer::bind()
-        .inspect_err(|e| tracing::error!("cannot bind the audio server: {e}"))
-        .ok();
-    let stream_base = audio_server.as_ref().map(LoopbackServer::stream_base);
-    let mut app = AppState::new(&dirs.cache)?;
-    if let (Some(server), Some(streams)) = (audio_server, app.streams.clone()) {
-        if let Some(base) = &stream_base {
-            app.api.set_stream_base(base.clone());
-        }
-        app.stream_base = stream_base;
-        tokio::spawn(async move {
-            if let Err(e) = server.serve(streams).await {
-                tracing::error!("audio server stopped: {e}");
-            }
-        });
-    }
-    let net = NetworkState::new(SettingsStore::new(&dirs.config));
-    let wave = WaveState::open(&dirs.data, app.api.ytm())?;
-    let library = Arc::new(Library::open(&dirs.data, Some(wave.engine()))?);
-    let scrobble = {
-        let net = app.net.clone();
-        let http = volna_scrobble::ReqwestHttp::new(move || net.client());
-        volna_scrobble::Scrobbling::open(&dirs.data.join("scrobble.sqlite3"), Arc::new(http))
-            .map_err(anyhow::Error::msg)?
+    let config = CoreConfig {
+        dirs: Dirs::new()?,
+        proxy: true,
+        audio_server: true,
+        backend: StreamBackend::locate_ytdlp(),
     };
-    scrobble.spawn_retry(Duration::from_secs(120));
-    library.set_scrobble(scrobble.clone());
-    let player = player::setup(&dirs.data, &dirs.config, &app, &wave, &library, &scrobble);
-    let yandex = crate::api::yandex::desktop_state(&app, &dirs.cache, library.clone());
+    let core = Core::start(config, player::gstreamer_output()).await?;
+    let api = crate::state::AppState::from_core(core.app.clone()).api;
     let daemon = Arc::new(Daemon {
-        app,
-        net,
-        wave,
-        library,
-        player,
-        scrobble,
-        yandex,
+        core,
+        api,
         window: WindowLink::default(),
         child: Mutex::new(None),
         quitting: AtomicBool::new(false),
     });
-    {
-        // Restoring may start xray; nothing waits for it.
-        let d = daemon.clone();
-        tokio::spawn(async move { d.net.restore(&d.app).await });
-    }
+    // Core events (player, library, Yandex) go to the window while one is connected.
     let sink: Arc<dyn EventSink> = Arc::new(Sink(Arc::downgrade(&daemon)));
-    {
-        let sink = sink.clone();
-        daemon.library.set_listener(move |name, payload| {
-            if sink.connected() {
-                sink.emit(name, payload);
-            }
-        });
-    }
+    daemon.core.set_event_sink(Some(sink));
     let handle = daemon.player.handle_opt().cloned();
-    player::forward::start(sink, handle.clone(), &daemon.player.journal);
     player::tray::start(daemon.clone(), handle.clone());
     #[cfg(target_os = "linux")]
     if let Some(h) = handle {
@@ -531,7 +457,7 @@ async fn protocol_call(
         req = req.header(k, v);
     }
     let resp = match req.body(body) {
-        Ok(req) => crate::protocol::handle(&d.app, req).await,
+        Ok(req) => crate::protocol::handle_with(&d.app, &d.api, req).await,
         Err(e) => crate::protocol::json_error(http::StatusCode::BAD_REQUEST, &e.to_string()),
     };
     let (parts, body) = resp.into_parts();

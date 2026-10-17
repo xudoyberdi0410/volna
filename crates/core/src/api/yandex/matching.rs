@@ -691,7 +691,7 @@ pub(crate) mod tests {
     }
 
     /// Real searches for a few known songs:
-    /// `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 cargo test -p volna-daemon yandex_live_match -- --ignored --nocapture`.
+    /// `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 cargo test -p volna-core yandex_live_match -- --ignored --nocapture`.
     #[tokio::test]
     #[ignore]
     async fn yandex_live_match() {

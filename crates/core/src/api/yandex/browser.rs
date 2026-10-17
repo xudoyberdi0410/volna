@@ -16,11 +16,14 @@ use crate::state::AppState;
 /// (with the cookies source from Settings → «Сеть»), the jar dumped to
 /// `cache_dir`; matches go into `library`.
 pub fn desktop_state(app: &AppState, cache_dir: &Path, library: Arc<Library>) -> Arc<YandexState> {
-    let browser: Option<TokenSource> = app.streams.clone().map(|streams| {
-        let dir = cache_dir.to_owned();
+    let browser: Option<TokenSource> = app.ytdlp().is_some().then(|| {
+        let (streams, dir) = (app.streams.clone(), cache_dir.to_owned());
         let source: TokenSource = Arc::new(move || {
             let (streams, dir) = (streams.clone(), dir.clone());
-            Box::pin(async move { browser_token(streams.backend(), &dir).await })
+            Box::pin(async move {
+                let ytdlp = streams.as_ref().and_then(|s| s.backend().ytdlp())?;
+                browser_token(ytdlp, &dir).await
+            })
         });
         source
     });
@@ -53,7 +56,7 @@ mod tests {
     use crate::api::yandex::client::{Client, export};
 
     /// The whole library through the real browser session:
-    /// `VOLNA_TEST_COOKIES=chrome cargo test -p volna-daemon yandex_live -- --ignored --nocapture`.
+    /// `VOLNA_TEST_COOKIES=chrome cargo test -p volna-core yandex_live -- --ignored --nocapture`.
     /// Prints counts only, never cookies or the token.
     #[tokio::test]
     #[ignore]
@@ -92,7 +95,7 @@ mod tests {
     /// Browser token → library → the first 25 likes, 2 playlists, 5 albums and
     /// 5 artists matched on YouTube Music (through `VOLNA_TEST_PROXY`) and saved
     /// into an in-memory library:
-    /// `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome cargo test -p volna-daemon yandex_live_import -- --ignored --nocapture`.
+    /// `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome cargo test -p volna-core yandex_live_import -- --ignored --nocapture`.
     #[tokio::test]
     #[ignore]
     async fn yandex_live_import() {

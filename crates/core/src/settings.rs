@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use volna_net::ProxyConfig;
+#[cfg(feature = "ytdlp")]
 use volna_streams::Cookies;
 
 pub const FILE_NAME: &str = "settings.json";
@@ -20,6 +21,7 @@ pub struct Settings {
     /// How the app reaches the internet; applied on startup.
     pub network: ProxyConfig,
     /// Cookies for yt-dlp (helps against YouTube's bot check); applied on startup.
+    #[cfg(feature = "ytdlp")]
     pub ytdlp_cookies: Cookies,
 }
 
@@ -131,10 +133,15 @@ mod tests {
             ProxyConfig::Url("socks5h://u:p@127.0.0.1:1080".into()),
             ProxyConfig::Vless("vless://id@example.com:443?security=reality&pbk=x".into()),
         ] {
-            let settings = Settings {
+            #[cfg_attr(not(feature = "ytdlp"), allow(unused_mut, clippy::needless_update))]
+            let mut settings = Settings {
                 network,
-                ytdlp_cookies: Cookies::File("/home/u/cookies.txt".into()),
+                ..Settings::default()
             };
+            #[cfg(feature = "ytdlp")]
+            {
+                settings.ytdlp_cookies = Cookies::File("/home/u/cookies.txt".into());
+            }
             store.save(&settings).unwrap();
             assert_eq!(store.load().unwrap(), settings);
         }
@@ -157,6 +164,7 @@ mod tests {
             ProxyConfig::Url("http://127.0.0.1:8080".into())
         );
         // Files from before the cookie setting load with no cookies.
+        #[cfg(feature = "ytdlp")]
         assert_eq!(store.load().unwrap().ytdlp_cookies, Cookies::None);
         fs::write(store.path(), "{}").unwrap();
         assert_eq!(store.load().unwrap().network, ProxyConfig::Direct);

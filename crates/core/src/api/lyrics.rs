@@ -16,7 +16,7 @@ use serde_json::Value;
 use volna_lyrics::{Key, LyricsService, TrackQuery};
 use volna_ytm::YtmClient;
 
-use crate::daemon::{Daemon, Dirs};
+use crate::core::Core;
 use crate::dispatch::out;
 
 /// Arguments shared by both commands.
@@ -125,21 +125,20 @@ fn service(data_dir: &Path, ytm: YtmClient) -> Result<Arc<LyricsService>, String
 }
 
 /// Lyrics commands; `None` for any other command.
-pub async fn call(d: &Daemon, cmd: &str, a: &Value) -> Option<Result<Value, String>> {
+pub async fn call(d: &Core, cmd: &str, a: &Value) -> Option<Result<Value, String>> {
     if !matches!(cmd, "lyrics_get" | "lyrics_sources") {
         return None;
     }
     Some(run(d, cmd, a).await)
 }
 
-async fn run(d: &Daemon, cmd: &str, a: &Value) -> Result<Value, String> {
+async fn run(d: &Core, cmd: &str, a: &Value) -> Result<Value, String> {
     let args: Args = serde_json::from_value(a.clone()).map_err(|e| format!("invalid args: {e}"))?;
     if args.video_id.trim().is_empty() {
         return Err("invalid args `videoId`: empty".into());
     }
-    let ytm = d.app.api.ytm();
-    let dirs = Dirs::new().map_err(|e| e.to_string())?;
-    let svc = service(&dirs.data, ytm.clone())?;
+    let ytm = d.app.ytm.clone();
+    let svc = service(&d.dirs.data, ytm.clone())?;
     let http = d.app.net.client();
     if cmd == "lyrics_sources" {
         out(lyrics_sources(&svc, &http, &ytm, &args).await)

@@ -1,155 +1,43 @@
 //! `volna://` custom protocol: the webview's only door to the outside world.
-//!
-//! The same request arrives in two shapes depending on the platform:
-//! - Linux / macOS: `volna://api/search/?s=x` — the route is the URI host.
-//! - Windows (WebView2): `http://volna.localhost/api/search/?s=x` — the host
-//!   is fixed and the route is the first path segment.
-//!
-//! [`Target::parse`] normalises both into a route plus the remaining path.
+//! Images and audio are `volna_core::protocol`; the daemon adds the hifi-api
+//! emulation (`volna://api/`) the old webview UI reads.
 
-use http::{Request, Response, StatusCode, header};
+use http::{Request, Response};
 
-use crate::media;
+pub use volna_core::protocol::{Route, Target, json_error, with_cors};
+
+use crate::api_emu::ApiEmu;
 use crate::state::AppState;
-
-/// Host used by WebView2 for custom schemes (`http://<scheme>.localhost/`).
-const WINDOWS_HOST: &str = "volna.localhost";
-
-/// Which service a request is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route {
-    /// hifi-api compatible JSON endpoints (`volna://api/...`).
-    Api,
-    /// Audio bytes with Range support (`volna://stream/<videoId>`).
-    Stream,
-    /// Proxied cover images (`volna://img/?u=<urlencoded>&s=<px>`).
-    Img,
-}
-
-/// A parsed `volna://` request target.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Target {
-    pub route: Route,
-    /// Path after the route, always starting with `/` (e.g. `/search/`).
-    pub path: String,
-    /// Raw query string without `?`, if any.
-    pub query: Option<String>,
-}
-
-impl Target {
-    /// Parses a request URI; returns `None` for unknown routes.
-    pub fn parse(uri: &http::Uri) -> Option<Self> {
-        let host = uri.host().unwrap_or_default();
-        let raw_path = uri.path();
-
-        let (route_name, rest) = if host.eq_ignore_ascii_case(WINDOWS_HOST) {
-            let trimmed = raw_path.trim_start_matches('/');
-            match trimmed.split_once('/') {
-                Some((first, rest)) => (first, format!("/{rest}")),
-                None => (trimmed, "/".to_owned()),
-            }
-        } else {
-            let rest = if raw_path.is_empty() { "/" } else { raw_path };
-            (host, rest.to_owned())
-        };
-
-        let route = match route_name.to_ascii_lowercase().as_str() {
-            "api" => Route::Api,
-            "stream" => Route::Stream,
-            "img" => Route::Img,
-            _ => return None,
-        };
-
-        Some(Self {
-            route,
-            path: rest,
-            query: uri.query().map(str::to_owned),
-        })
-    }
-}
 
 /// Dispatches a protocol request.
 pub async fn handle(state: &AppState, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    if request.method() == http::Method::OPTIONS {
-        return with_cors(Response::builder().status(StatusCode::NO_CONTENT))
-            .body(Vec::new())
-            .expect("static response is valid");
-    }
+    handle_with(&state.core, &state.api, request).await
+}
 
+/// [`handle`] over the core state and the emulator held separately.
+pub async fn handle_with(
+    core: &volna_core::AppState,
+    api: &ApiEmu,
+    request: Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    if let Some(res) = volna_core::protocol::handle_core(core, &request).await {
+        return res;
+    }
     match Target::parse(request.uri()) {
-        Some(target) if target.route == Route::Stream => {
-            media::stream(state, &target, &request).await
-        }
-        Some(target) if target.route == Route::Img => media::image(state, &target).await,
-        Some(target) => state.api.handle(&target).await,
-        None => json_error(StatusCode::NOT_FOUND, "unknown volna:// route"),
+        Some(target) => api.handle(&target).await,
+        None => json_error(http::StatusCode::NOT_FOUND, "unknown volna:// route"),
     }
-}
-
-pub(crate) fn with_cors(builder: http::response::Builder) -> http::response::Builder {
-    builder
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "*")
-        .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
-        .header(
-            header::ACCESS_CONTROL_EXPOSE_HEADERS,
-            "Content-Length, Content-Range, Accept-Ranges, Content-Type",
-        )
-}
-
-pub(crate) fn json_error(status: StatusCode, message: &str) -> Response<Vec<u8>> {
-    let body = serde_json::to_vec(&serde_json::json!({
-        "status": status.as_u16(),
-        "error": message,
-    }))
-    .expect("JSON serialisation of a static shape cannot fail");
-
-    with_cors(Response::builder().status(status))
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body)
-        .expect("static response is valid")
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use http::{StatusCode, header};
 
     /// App state with a throwaway cache dir, as `setup` would build it.
     pub(crate) fn test_state() -> AppState {
         let dir = std::env::temp_dir().join(format!("volna-test-cache-{}", std::process::id()));
         AppState::new(&dir).unwrap()
-    }
-
-    fn parse(uri: &str) -> Option<Target> {
-        Target::parse(&uri.parse().unwrap())
-    }
-
-    #[test]
-    fn unix_style_uses_host_as_route() {
-        let t = parse("volna://api/search/?s=daft%20punk").unwrap();
-        assert_eq!(t.route, Route::Api);
-        assert_eq!(t.path, "/search/");
-        assert_eq!(t.query.as_deref(), Some("s=daft%20punk"));
-    }
-
-    #[test]
-    fn windows_style_uses_first_segment_as_route() {
-        let t = parse("http://volna.localhost/stream/dQw4w9WgXcQ").unwrap();
-        assert_eq!(t.route, Route::Stream);
-        assert_eq!(t.path, "/dQw4w9WgXcQ");
-        assert_eq!(t.query, None);
-    }
-
-    #[test]
-    fn route_without_path_gets_root() {
-        assert_eq!(parse("volna://api").unwrap().path, "/");
-        assert_eq!(parse("http://volna.localhost/api").unwrap().path, "/");
-    }
-
-    #[test]
-    fn unknown_route_is_none() {
-        assert_eq!(parse("volna://evil/x"), None);
-        assert_eq!(parse("http://volna.localhost/evil/x"), None);
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@
 use volna_player::{AlbumRef, ArtistRef, Origin, PlayerTrack, TrackInput, TrackKind};
 use volna_ytm::{Track, TrackKind as YtmKind};
 
-use crate::api_emu::shape::{self, TrackCtx};
+use crate::shape::{self, TrackCtx};
 
 /// A YouTube Music track as a queue entry: `raw` is the hifi-api shape the UI
 /// runs through `prepareTrack`, `cover` the `volna://img` URL.

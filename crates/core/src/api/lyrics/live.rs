@@ -1,6 +1,6 @@
 //! Which lyrics providers work today, against the real services.
 //!
-//! `cargo test -p volna-daemon lyrics_live -- --ignored --nocapture --test-threads=1`
+//! `cargo test -p volna-core lyrics_live -- --ignored --nocapture --test-threads=1`
 //!
 //! Set `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081` to go out like the app
 //! (YouTube Music is geo-blocked in some countries).

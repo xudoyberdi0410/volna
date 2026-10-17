@@ -11,7 +11,7 @@
 //! `yandex_import_cancel`. Events: `yandex_import_progress` ([`Progress`]) and
 //! `yandex_import_done` ([`Done`]).
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(feature = "ytdlp")]
 pub mod browser;
 pub mod client;
 pub mod import;
@@ -26,7 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::watch;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(feature = "ytdlp")]
 pub use browser::desktop_state;
 use client::{ApiError, Client, Library};
 pub use import::{LibrarySink, Miss, Options, Progress, Summary};

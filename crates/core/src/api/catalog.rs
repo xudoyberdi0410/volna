@@ -169,7 +169,7 @@ mod tests {
 /// The catalogue against the real YouTube Music, through the same
 /// [`crate::dispatch`] path the window uses. Run like `api_live` (CLAUDE.md):
 /// `VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome
-/// cargo test -p volna-daemon api_live -- --ignored --nocapture --test-threads=1`
+/// cargo test -p volna-core api_live -- --ignored --nocapture --test-threads=1`
 #[cfg(test)]
 mod live {
     use super::*;
@@ -184,7 +184,7 @@ mod live {
                 .await
                 .expect("VOLNA_TEST_PROXY");
         }
-        state.api.ytm()
+        state.ytm.clone()
     }
 
     async fn ok(ytm: &YtmClient, cmd: &str, args: Value) -> Value {

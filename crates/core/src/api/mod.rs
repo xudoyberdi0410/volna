@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::daemon::Daemon;
+use crate::core::Core;
 
 pub mod catalog;
 pub mod color;
@@ -24,8 +24,8 @@ pub mod scrobble;
 pub mod yandex;
 
 /// The handler of `cmd`, if one of these modules owns it.
-pub async fn call(d: &Arc<Daemon>, cmd: &str, a: &Value) -> Option<Result<Value, String>> {
-    if let Some(r) = catalog::call(&d.app.api.ytm(), cmd, a).await {
+pub async fn call(d: &Arc<Core>, cmd: &str, a: &Value) -> Option<Result<Value, String>> {
+    if let Some(r) = catalog::call(&d.app.ytm, cmd, a).await {
         return Some(r);
     }
     if let Some(r) = color::call(&d.app.palettes, &d.app.images, cmd, a).await {
@@ -47,7 +47,7 @@ pub async fn call(d: &Arc<Daemon>, cmd: &str, a: &Value) -> Option<Result<Value,
     if let Some(r) = scrobble::call(&d.scrobble, cmd, a).await {
         return Some(r);
     }
-    if let Some(r) = yandex::call(&d.yandex, d.app.api.ytm(), || d.emitter(), cmd, a).await {
+    if let Some(r) = yandex::call(&d.yandex, d.app.ytm.clone(), || d.emitter(), cmd, a).await {
         return Some(r);
     }
     None

@@ -106,10 +106,10 @@ pub async fn yandex_export(
 
 /// A token from the browser's Yandex session, or `None`.
 async fn browser_token(app: &AppHandle, app_state: &AppState) -> Option<String> {
-    let streams = app_state.streams.as_ref()?;
+    let ytdlp = app_state.ytdlp()?;
     let dir = app.path().app_cache_dir().ok()?;
     progress(app, "browser", None);
-    browser::browser_token(streams.backend(), &dir).await
+    browser::browser_token(ytdlp, &dir).await
 }
 
 /// Opens the login window and waits for the redirect with the token.

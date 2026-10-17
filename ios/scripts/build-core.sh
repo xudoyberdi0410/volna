@@ -25,7 +25,7 @@ ios() {
 }
 
 linux() {
-    (cd "$ROOT" && cargo build -p volna-core --no-default-features --features ffi)
+    (cd "$ROOT" && cargo build -p volna-core --no-default-features --features ffi,innertube)
     mkdir -p "$IOS/Libs/linux-x86_64"
     # Only the static library: with a .so next to it the linker would pick that.
     cp "$TARGET_DIR/debug/libvolna_core.a" "$IOS/Libs/linux-x86_64/"

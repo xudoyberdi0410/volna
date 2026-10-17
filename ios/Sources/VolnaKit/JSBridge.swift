@@ -1,59 +1,44 @@
+import CVolnaCore
 import Foundation
 
-/// A JavaScript job from the core (`volna_core_set_js_callback`):
-/// `{"script": <source>, "args": <any JSON>}`.
+/// A JavaScript job of the stream resolver (`docs/streams.md`, "JsRuntime
+/// contract"): `request` is a `JsRequest` as JSON (`{"op":"solve",…}`).
 ///
-/// How the iOS host runs it (one long-lived web view, so state survives
-/// between jobs, e.g. a prelude that defines globals):
-/// 1. `script` is evaluated as a global script (indirect `eval`), so its
-///    top-level declarations become globals.
-/// 2. If it evaluates to a function, that function is called with `args`.
-/// 3. A promise is awaited.
-/// 4. The value is answered as JSON (`undefined` → `null`); a throw or
-///    rejection is answered as an error with its message.
-///
-/// So `{"script": "<prelude>"}` loads code once, `{"script": "volnaJs",
-/// "args": "<request>"}` calls it, and `{"script": "1 + 1"}` answers `2`.
+/// The host keeps one long-lived web page with `Core.jsPrelude` loaded
+/// (it defines `globalThis.volnaJs`), runs `volnaJs(request)` for every job
+/// and hands the string the promise resolves to back unchanged. `volnaJs`
+/// never rejects; a failure to run at all (no page, WebKit error) is
+/// answered as an error instead.
 public struct JSJob: Equatable, Sendable {
     public let id: UInt64
-    public let script: String
-    public let args: JSON
+    /// The request JSON, passed to `volnaJs` as a string.
+    public let request: String
 
-    public init?(id: UInt64, request: JSON) {
-        guard let script = request["script"].string else { return nil }
+    public init(id: UInt64, request: String) {
         self.id = id
-        self.script = script
-        args = request["args"]
+        self.request = request
     }
 
-    /// The body for `WKWebView.callAsyncJavaScript(_:arguments:…)` with the
-    /// arguments `script` (string) and `argsJson` (string). It resolves to
-    /// the JSON text of the result.
-    public static let asyncBody = """
-        const value = (0, eval)(script);
-        const args = JSON.parse(argsJson);
-        let result = typeof value === 'function' ? await value(args) : await value;
-        if (result === undefined) result = null;
-        return JSON.stringify(result);
-        """
+    /// `op` of the request, for logs.
+    public var op: String { (try? JSON.parse(request))?["op"].string ?? "?" }
 
-    /// The arguments for `asyncBody`.
-    public var arguments: [String: String] {
-        ["script": script, "argsJson": args.encoded()]
-    }
+    /// The body for `WKWebView.callAsyncJavaScript(_:arguments:…)`, with
+    /// `arguments` as its arguments.
+    public static let asyncBody = "return await volnaJs(r);"
 
-    /// What goes back to the core for the web view's outcome: the JSON text
-    /// of the result (checked), or the error message.
+    public var arguments: [String: Any] { ["r": request] }
+
+    /// Is the prelude there? (`callAsyncJavaScript` body; resolves to a Bool.)
+    public static let probeBody = "return typeof globalThis.volnaJs === 'function';"
+
+    /// What goes back to the core for the web view's outcome: the resolved
+    /// string unchanged, or why it could not run.
     public static func answer(evaluated: Any?, error: Error?) -> Result<String, JSError> {
         if let error {
             return .failure(JSError(JSJob.message(of: error)))
         }
         guard let text = evaluated as? String else {
-            // `JSON.stringify` of a function or symbol gives undefined.
-            return .success("null")
-        }
-        guard (try? JSON.parse(text)) != nil else {
-            return .failure(JSError("the script result is not JSON"))
+            return .failure(JSError("volnaJs did not resolve to a string"))
         }
         return .success(text)
     }
@@ -64,4 +49,10 @@ public struct JSJob: Equatable, Sendable {
         if let m = ns.userInfo["WKJavaScriptExceptionMessage"] as? String, !m.isEmpty { return m }
         return ns.localizedDescription
     }
+}
+
+public extension Core {
+    /// The script a JS context loads once before any job
+    /// (`volna_core_js_prelude`: yt-dlp's challenge solver and `volnaJs`).
+    static var jsPrelude: String { String(cString: volna_core_js_prelude()) }
 }

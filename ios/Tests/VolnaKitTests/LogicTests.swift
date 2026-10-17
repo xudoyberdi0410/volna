@@ -270,27 +270,66 @@ final class PlatformPlayerTests: XCTestCase {
 }
 
 final class JSJobTests: XCTestCase {
-    func testJobsParseAndAnswer() {
-        let job = JSJob(id: 7, request: ["script": "volnaJs", "args": ["op": "version"]])!
-        XCTAssertEqual(job.arguments["script"], "volnaJs")
-        XCTAssertEqual(job.arguments["argsJson"], #"{"op":"version"}"#)
-        XCTAssertNil(JSJob(id: 1, request: ["args": 1]))
-        XCTAssertEqual(JSJob(id: 2, request: ["script": "1+1"])?.arguments["argsJson"], "null")
+    func testJobsAndAnswers() {
+        let job = JSJob(id: 7, request: #"{"op":"version"}"#)
+        XCTAssertEqual(job.op, "version")
+        XCTAssertEqual(job.arguments["r"] as? String, #"{"op":"version"}"#)
+        XCTAssertEqual(JSJob.asyncBody, "return await volnaJs(r);")
 
-        XCTAssertEqual(JSJob.answer(evaluated: #"{"a":1}"#, error: nil), .success(#"{"a":1}"#))
-        XCTAssertEqual(JSJob.answer(evaluated: nil, error: nil), .success("null"))
-        XCTAssertEqual(JSJob.answer(evaluated: "{nope", error: nil), .failure(JSError("the script result is not JSON")))
-        let e = NSError(domain: "WKErrorDomain", code: 4, userInfo: ["WKJavaScriptExceptionMessage": "TypeError: x"])
-        XCTAssertEqual(JSJob.answer(evaluated: nil, error: e), .failure(JSError("TypeError: x")))
+        // The resolved string goes back unchanged, whatever it holds.
+        XCTAssertEqual(JSJob.answer(evaluated: #"{"ok":{"version":1}}"#, error: nil), .success(#"{"ok":{"version":1}}"#))
+        XCTAssertEqual(JSJob.answer(evaluated: nil, error: nil), .failure(JSError("volnaJs did not resolve to a string")))
+        let e = NSError(domain: "WKErrorDomain", code: 4, userInfo: ["WKJavaScriptExceptionMessage": "ReferenceError: volnaJs"])
+        XCTAssertEqual(JSJob.answer(evaluated: nil, error: e), .failure(JSError("ReferenceError: volnaJs")))
     }
 
-    func testTheCoreGetsJobsAndAnswers() async throws {
-        // Without a stream resolver the core never sends jobs; the handler and
-        // the answer path are still wired: an unknown id is refused.
+    func testThePreludeDefinesVolnaJs() {
+        let p = Core.jsPrelude
+        XCTAssertGreaterThan(p.utf8.count, 100_000)
+        XCTAssertTrue(p.contains("globalThis.volnaJs"))
+    }
+
+    func testUnknownJobIdsAreRefused() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("volnakit-js-\(UUID().uuidString)")
         let core = try Core(config: CoreConfig(dataDir: dir.path, audioServer: false))
         defer { core.shutdown(); try? FileManager.default.removeItem(at: dir) }
-        core.setJsHandler { id, _ in _ = id }
+        core.setJsHandler { _ in }
         XCTAssertFalse(core.jsResult(1, .failure(JSError("x"))))
+        XCTAssertFalse(core.jsResult(1, .success(#"{"ok":null}"#)))
+    }
+
+    /// The resolver's JS jobs reach the handler and the canned answers reach
+    /// the resolver (no JS engine here: a stub answers). Needs the network:
+    /// `VOLNA_TEST_PROXY=socks5h://… [VOLNA_TEST_COOKIES_TXT=cookies.txt] swift test --filter Live`.
+    func testLiveJobsRoundTripThroughTheResolver() async throws {
+        guard let proxy = ProcessInfo.processInfo.environment["VOLNA_TEST_PROXY"] else {
+            throw XCTSkip("set VOLNA_TEST_PROXY to run the live resolver test")
+        }
+        let cookies = ProcessInfo.processInfo.environment["VOLNA_TEST_COOKIES_TXT"]
+            .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("volnakit-js-\(UUID().uuidString)")
+        let core = try Core(config: CoreConfig(dataDir: dir.path, devProxy: proxy, youtubeCookies: cookies))
+        defer { core.shutdown(); try? FileManager.default.removeItem(at: dir) }
+        let jobs = Recorder<(String, Bool)>()
+        core.setJsHandler { [weak core] job in
+            let canned: String = switch job.op {
+            case "version": #"{"ok":{"version":1}}"#
+            default: #"{"error":{"code":"solver","message":"stub host: no JS engine"}}"#
+            }
+            let taken = core?.jsResult(job.id, .success(canned)) ?? false
+            jobs.add((job.op, taken))
+        }
+        let api = API(core)
+        _ = try await api.setQueue([TrackInput(id: "dQw4w9WgXcQ", title: "Never Gonna Give You Up")], play: true)
+        let deadline = Date().addingTimeInterval(60)
+        while jobs.values.isEmpty, Date() < deadline {
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        guard let first = jobs.values.first else {
+            throw XCTSkip("the resolver made no JS request in 60 s (refused before the player JS)")
+        }
+        print("JS jobs: \(jobs.values.map(\.0))")
+        XCTAssertTrue(["solve", "botguard_snapshot", "botguard_mint", "version"].contains(first.0), first.0)
+        XCTAssertTrue(jobs.values.allSatisfy(\.1), "the core took every answer")
     }
 }

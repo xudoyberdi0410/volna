@@ -16,15 +16,20 @@ public struct CoreConfig: Encodable, Sendable {
     public var codec: String? = "aac"
     /// Debug builds of the core only: route every request through this proxy.
     public var devProxy: String?
+    /// The signed-in YouTube session (Netscape cookies.txt) for the stream
+    /// resolver; without it YouTube often answers with its bot check.
+    public var youtubeCookies: String?
 
     public init(dataDir: String, cacheDir: String? = nil, audioServer: Bool = true,
-                log: String? = nil, codec: String? = "aac", devProxy: String? = nil) {
+                log: String? = nil, codec: String? = "aac", devProxy: String? = nil,
+                youtubeCookies: String? = nil) {
         self.dataDir = dataDir
         self.cacheDir = cacheDir
         self.audioServer = audioServer
         self.log = log
         self.codec = codec
         self.devProxy = devProxy
+        self.youtubeCookies = youtubeCookies
     }
 }
 
@@ -101,7 +106,7 @@ public final class Core: CoreTransport, @unchecked Sendable {
     private var protos: [UInt64: CheckedContinuation<ProtoResponse, Never>] = [:]
     private var listeners: [UUID: AsyncStream<CoreEvent>.Continuation] = [:]
     private var playerHandler: (@Sendable (JSON) -> Void)?
-    private var jsHandler: (@Sendable (UInt64, JSON) -> Void)?
+    private var jsHandler: (@Sendable (JSJob) -> Void)?
     private var closed = false
     /// The `user_data` of every callback: an unretained pointer to `self`,
     /// valid until `shutdown` (callbacks are cleared there first).
@@ -271,9 +276,9 @@ public final class Core: CoreTransport, @unchecked Sendable {
 
     // MARK: - JavaScript
 
-    /// Where JS jobs go: `(request id, {"script":…,"args":…})`. Answer with
-    /// `jsResult`.
-    public func setJsHandler(_ f: (@Sendable (UInt64, JSON) -> Void)?) {
+    /// Where the stream resolver's JS jobs go (`JSJob`). Answer each with
+    /// `jsResult`; the handler must not block (it runs on a core thread).
+    public func setJsHandler(_ f: (@Sendable (JSJob) -> Void)?) {
         lock.lock()
         jsHandler = f
         lock.unlock()
@@ -283,16 +288,15 @@ public final class Core: CoreTransport, @unchecked Sendable {
         lock.lock()
         let f = jsHandler
         lock.unlock()
-        let request = (try? JSON.parse(text)) ?? .null
         if let f {
-            f(id, request)
+            f(JSJob(id: id, request: text))
         } else {
             _ = jsResult(id, .failure("no JS runtime"))
         }
     }
 
-    /// The answer to JS job `id`: the script's JSON result text, or an error
-    /// message. False when nothing waits for that id.
+    /// The answer to JS job `id`: the string `volnaJs` resolved to,
+    /// unchanged, or why it could not run. False when nothing waits for that id.
     @discardableResult
     public func jsResult(_ id: UInt64, _ result: Result<String, JSError>) -> Bool {
         lock.lock()

@@ -145,29 +145,53 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try JSON.parse(r.body)["status"].int, 400)
     }
 
-    func testQueueWithoutAStreamBackendReportsAnError() async throws {
+    func testQueueDrivesThePlatformPlayer() async throws {
         let events = core.events()
-        let commands = Recorder<JSON>()
-        core.setPlayerHandler { commands.add($0) }
+        let commands = Recorder<PlayerCommand>()
+        let core = self.core!
+        // The app's AVPlayer side, minus AVPlayer: the bridge over a fake engine.
+        final class Engine: MediaEngine {
+            var loads: [URL] = []
+            func load(url: URL, startSeconds: Double, token: Int) { loads.append(url) }
+            func play() {}
+            func pause() {}
+            func seek(seconds: Double) {}
+            func stop() {}
+            func setVolume(_ v: Double) {}
+        }
+        let engine = Engine()
+        let bridge = PlatformPlayerBridge(engine: engine) { core.report($0) }
+        let lock = NSLock()
+        core.setPlayerHandler { j in
+            guard let cmd = PlayerCommand(j) else { return }
+            commands.add(cmd)
+            lock.withLock { bridge.handle(cmd) }
+        }
         let t = TrackInput(id: "dQw4w9WgXcQ", title: "A", artists: [PArtist(id: nil, name: "B")], duration: 213)
         let rev = try await api.setQueue([t], play: true)
         XCTAssertGreaterThan(rev, 0)
         var model = PlayerModel()
         model.apply(try await api.snapshot())
-        // The mobile core has no stream backend yet: the engine says so.
+        XCTAssertEqual(model.queue.map(\.trackId), ["dQw4w9WgXcQ"])
+        XCTAssertEqual(model.current?.title, "A")
+
+        // The core asks for the loopback URL, AAC only (the iOS init option).
+        let deadline = Date().addingTimeInterval(20)
+        while engine.loads.isEmpty, Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        let url = try XCTUnwrap(engine.loads.first)
+        XCTAssertEqual(url.host, "127.0.0.1")
+        XCTAssertTrue(url.path.hasSuffix("/dQw4w9WgXcQ"), url.path)
+        XCTAssertEqual(url.query, "codec=aac")
+
+        // The engine fails to open it: the core hears it as a player error.
+        lock.withLock { bridge.engineFailed(token: bridge.token, message: "HTTP 500") }
         let err = try await firstEvent(events) { e in
             if let pe = PlayerEvent(e) { model.apply(pe) }
             return e.name == "player:error"
         }
-        XCTAssertEqual(PlayerEvent(err).map { if case .error(let x) = $0 { x.kind } else { "" } }, "no_yt_dlp")
-        XCTAssertEqual(model.queue.map(\.trackId), ["dQw4w9WgXcQ"])
-        XCTAssertEqual(model.current?.title, "A")
-        // Reports are accepted, nonsense is not reachable through the typed API.
-        XCTAssertTrue(core.report(.paused))
+        guard case .error(let pe)? = PlayerEvent(err) else { return XCTFail("\(err)") }
+        XCTAssertEqual(pe.trackId, "dQw4w9WgXcQ")
         XCTAssertFalse(core.jsResult(42, .success("1")))
-        XCTAssertEqual(commands.values.compactMap(PlayerCommand.init).filter {
-            if case .load = $0 { true } else { false }
-        }.count, 0)
     }
 
     func testShutdownFailsLaterCalls() async throws {

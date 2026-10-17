@@ -34,6 +34,7 @@ import { db } from './db.js';
 import { getVibrantColorFromImage } from './vibrant-color.js';
 import { Visualizer } from './visualizer.js';
 import { navigate } from './router.js';
+import { resizeImage } from './volna-media.js';
 import { sidePanelManager } from './side-panel.js';
 import {
     renderUnreleasedPage as renderUnreleasedTrackerPage,
@@ -45,6 +46,33 @@ import {
     createProjectCardHTML,
     createTrackFromSong,
 } from './tracker.js';
+
+/**
+ * Hidden pages keep their DOM, and with it every decoded cover (a long
+ * playlist alone is tens of MB). Images on inactive pages give up their
+ * `src` until the page is shown again; a render that already set a new
+ * `src` in the meantime wins over the parked one.
+ */
+function parkHiddenPageImages() {
+    for (const page of document.querySelectorAll('.page')) {
+        if (page.classList.contains('active')) {
+            for (const img of page.querySelectorAll('img[data-parked-src]')) {
+                if (!img.hasAttribute('src')) img.setAttribute('src', img.dataset.parkedSrc);
+                delete img.dataset.parkedSrc;
+            }
+            continue;
+        }
+        for (const img of page.querySelectorAll('img[src]')) {
+            const src = img.getAttribute('src');
+            if (!src || src.startsWith('data:')) continue;
+            img.dataset.parkedSrc = src;
+            img.removeAttribute('src');
+        }
+    }
+}
+
+/** Edge in px of the blurred cover behind album/playlist/artist pages. */
+const PAGE_BACKGROUND_SIZE = 160;
 
 let _isBlockedCopyright = (_c) => false;
 let _isBlockedTrackerProject = (_s, _p) => false;
@@ -1085,7 +1113,9 @@ export class UIRenderer {
     setPageBackground(imageUrl) {
         const bgElement = document.getElementById('page-background');
         if (backgroundSettings.isEnabled() && imageUrl) {
-            bgElement.style.backgroundImage = `url('${imageUrl}')`;
+            // Blurred by 50px anyway: a small cover looks the same and decodes
+            // to ~1/40 of the memory of the 1080 px header image.
+            bgElement.style.backgroundImage = `url('${resizeImage(imageUrl, PAGE_BACKGROUND_SIZE)}')`;
             bgElement.classList.add('active');
             document.body.classList.add('has-page-background');
         } else {
@@ -2412,6 +2442,7 @@ export class UIRenderer {
         document.querySelectorAll('.page').forEach((page) => {
             page.classList.toggle('active', page.id === `page-${pageId}`);
         });
+        parkHiddenPageImages();
 
         document.querySelectorAll('.sidebar-nav a').forEach((link) => {
             link.classList.toggle(

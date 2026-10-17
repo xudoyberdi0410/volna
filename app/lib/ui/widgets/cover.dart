@@ -7,11 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/models.dart';
 import '../../ipc/proto_image.dart';
-import '../../state/connection.dart';
+import '../../state/images.dart';
 
-/// One image cache per transport.
-final protoImageCacheProvider =
-    Provider<ProtoImageCache>((ref) => ProtoImageCache(ref.watch(transportProvider)));
+export '../../state/images.dart' show protoImageCacheProvider;
 
 /// Pixel size buckets asked from the daemon, so one cover is cached in few sizes.
 int _bucket(double px) {

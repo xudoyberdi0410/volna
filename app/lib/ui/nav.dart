@@ -27,28 +27,36 @@ abstract final class Paths {
 }
 
 // Detail pages are pushed (back returns to where the user was); top-level
-// destinations replace the stack.
+// destinations replace the stack. Both close the fullscreen player first,
+// since it sits above the shell.
 
-void openAlbum(BuildContext context, String id) => context.push(Paths.album(id));
+GoRouter _router(BuildContext context) {
+  final r = GoRouter.of(context);
+  if (r.routerDelegate.currentConfiguration.uri.path == Paths.player && r.canPop()) r.pop();
+  return r;
+}
 
-void openArtist(BuildContext context, String id) => context.push(Paths.artist(id));
+void openAlbum(BuildContext context, String id) => _router(context).push(Paths.album(id));
 
-void openPlaylist(BuildContext context, String id) => context.push(Paths.playlist(id));
+void openArtist(BuildContext context, String id) => _router(context).push(Paths.artist(id));
+
+void openPlaylist(BuildContext context, String id) =>
+    _router(context).push(Paths.playlist(id));
 
 void openLibraryPlaylist(BuildContext context, String id) =>
-    context.push(Paths.libraryPlaylist(id));
+    _router(context).push(Paths.libraryPlaylist(id));
 
 void openSearch(BuildContext context, [String query = '']) =>
-    context.go(Paths.searchQuery(query));
+    _router(context).go(Paths.searchQuery(query));
 
-void openLibrary(BuildContext context) => context.go(Paths.library);
+void openLibrary(BuildContext context) => _router(context).go(Paths.library);
 
-void openHistory(BuildContext context) => context.push(Paths.history);
+void openHistory(BuildContext context) => _router(context).push(Paths.history);
 
-void openWave(BuildContext context) => context.go(Paths.wave);
+void openWave(BuildContext context) => _router(context).go(Paths.wave);
 
 void openSettings(BuildContext context, [String? section]) =>
-    context.go(section == null ? Paths.settings : Paths.settingsSection(section));
+    _router(context).go(section == null ? Paths.settings : Paths.settingsSection(section));
 
 /// The fullscreen player (over the shell). [tab]: `lyrics` or `queue`.
 void openPlayer(BuildContext context, {String? tab}) =>

@@ -7,6 +7,7 @@
 @Tags(['live'])
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -104,7 +105,7 @@ void main() {
     await tester.tap(find.byType(TrackRow).at(1));
     await wait(() => true, seconds: 2);
     final snap = await tester.runAsync(() => t.call('player_snapshot'));
-    final queue = ((snap as Map)['queue'] as Map)['tracks'] as List;
+    final queue = ((snap as Map)['queue'] as Map)['items'] as List;
     expect(queue.map((e) => (e as Map)['id']), contains(row.track.videoId));
 
     // Like it from the row, then find it in the library.
@@ -118,7 +119,10 @@ void main() {
     await tester.runAsync(() async {
       await t.call('library_like', {'kind': 'track', 'item': row.track.videoId, 'on': false});
       await t.call('player_stop');
-      await t.close();
     });
+    // Not awaited: its listeners live in the test's fake-async zone, so the
+    // streams' done futures only complete on a pump.
+    unawaited(t.close());
+    await tester.pump();
   }, skip: !live || socket == null); // VOLNA_LIVE=1 + VOLNA_LIVE_SOCKET (an isolated daemon)
 }

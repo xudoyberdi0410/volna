@@ -9,6 +9,8 @@ pub mod forward;
 pub mod hooks;
 pub mod journal;
 pub mod platform;
+#[cfg(test)]
+mod tests;
 
 use std::path::Path;
 use std::sync::Arc;

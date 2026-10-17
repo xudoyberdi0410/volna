@@ -12,7 +12,7 @@ name = "volna_core"
 crate-type = ["rlib", "staticlib", "cdylib"]
 
 [features]
-default = ["ytdlp"]
+default = ["ytdlp", "ffi"]
 # Desktop: stream resolution, cookies and the Yandex browser session through
 # yt-dlp. Mobile builds use `--no-default-features` and inject a backend.
 # (Forwards to `volna-streams/ytdlp` once that crate gates yt-dlp.)

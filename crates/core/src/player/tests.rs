@@ -222,6 +222,7 @@ async fn core_commands_drive_the_platform_player() {
         proxy: false,
         audio_server: true,
         backend: Some(crate::StreamBackend::injected(NoBackend)),
+        codec: volna_streams::Codec::default(),
     };
     let core = crate::Core::start(config, Some(out.clone())).await.unwrap();
     let events = Arc::new(Collect(Mutex::new(Vec::new())));

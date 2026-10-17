@@ -176,6 +176,15 @@ struct InitConfig {
     /// A `tracing` filter (e.g. `"info"`) to log to stderr; none by default.
     #[serde(default)]
     log: Option<String>,
+    /// The codecs the platform player takes: `"aac"` (AVPlayer: m4a only)
+    /// or none (Opus preferred, AAC otherwise).
+    #[serde(default)]
+    codec: Option<String>,
+    /// Debug builds only: a proxy URL (`socks5h://…`) for every request,
+    /// so the core can be tested from where YouTube Music is blocked.
+    /// Ignored in release builds; mobile networking is direct.
+    #[serde(default)]
+    dev_proxy: Option<String>,
 }
 
 fn yes() -> bool {
@@ -192,7 +201,8 @@ fn fail(e: impl std::fmt::Display) -> *mut VolnaCore {
 }
 
 /// Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-/// "audioServer": true?, "log": "info"?}`. Returns NULL on failure; the
+/// "audioServer": true?, "log": "info"?, "codec": "aac"?, "devProxy": "…"?}`
+/// (`devProxy`: debug builds only). Returns NULL on failure; the
 /// reason is then in [`volna_core_last_error`] on the same thread.
 ///
 /// # Safety
@@ -229,6 +239,7 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         audio_server: config.audio_server,
         // The mobile stream resolver plugs in here, built with `js`.
         backend: None,
+        codec: volna_streams::Codec::from_param(config.codec.as_deref()),
     };
     let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         runtime.block_on(Core::start(core_config, Some(output.clone())))
@@ -238,6 +249,17 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         Ok(Err(e)) => return fail(format!("{e:#}")),
         Err(_) => return fail("panic while starting the core"),
     };
+    if let Some(proxy) = config.dev_proxy.filter(|p| !p.trim().is_empty()) {
+        if cfg!(debug_assertions) {
+            let proxy = volna_net::ProxyConfig::Url(proxy);
+            if let Err(e) = runtime.block_on(crate::network::switch(&core.app, proxy)) {
+                runtime.block_on(core.shutdown());
+                return fail(format!("devProxy: {e}"));
+            }
+        } else {
+            tracing::warn!("devProxy is ignored in release builds");
+        }
+    }
     let event: Slot<EventFn> = Arc::default();
     core.set_event_sink(Some(Arc::new(FfiEvents(event.clone()))));
     let player: Slot<PlayerFn> = Arc::default();
@@ -615,6 +637,29 @@ mod tests {
                 return got;
             }
         }
+    }
+
+    #[test]
+    fn dev_proxy_and_codec_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let init = |extra: Value| {
+            let mut c = serde_json::json!({ "dataDir": dir.path(), "audioServer": false });
+            c.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let c = cstr(&c.to_string());
+            // SAFETY: a valid string.
+            unsafe { volna_core_init(c.as_ptr()) }
+        };
+        // Tests are debug builds: a bad proxy URL is refused at init.
+        let h = init(serde_json::json!({ "devProxy": "ftp://nope" }));
+        assert!(h.is_null());
+        // SAFETY: the error string is ours to free.
+        assert!(unsafe { take(volna_core_last_error()) }.contains("devProxy"));
+        let h = init(serde_json::json!({ "devProxy": "socks5h://127.0.0.1:9", "codec": "aac" }));
+        assert!(!h.is_null());
+        // SAFETY: a live handle, shut down once.
+        unsafe { volna_core_shutdown(h) };
     }
 
     #[test]

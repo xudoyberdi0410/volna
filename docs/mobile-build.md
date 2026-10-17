@@ -78,7 +78,7 @@ targets with the host clang / the NDK clang.
 ## The C ABI in short
 
 ```c
-VolnaCore *volna_core_init(const char *config_json); // {"dataDir":…,"cacheDir"?,"audioServer"?,"log"?}; NULL → volna_core_last_error()
+VolnaCore *volna_core_init(const char *config_json); // {"dataDir":…,"cacheDir"?,"audioServer"?,"log"?,"codec"?,"devProxy"?}; NULL → volna_core_last_error()
 void volna_core_set_reply_callback(VolnaCore *, VolnaReplyCallback, void *user_data);   // (user, id, ok, json)
 void volna_core_set_event_callback(VolnaCore *, VolnaEventCallback, void *user_data);   // (user, name, payload_json)
 void volna_core_set_proto_callback(VolnaCore *, VolnaProtoCallback, void *user_data);   // (user, id, status, headers_json, body, len)
@@ -93,6 +93,11 @@ void volna_core_free_bytes(uint8_t *, size_t);
 void volna_core_shutdown(VolnaCore *);
 ```
 
+- Init options: `"codec": "aac"` makes the core ask the audio server for AAC
+  in m4a only (`?codec=aac` on the stream URLs, `Codec::AacOnly`): the iOS
+  app sets it, AVPlayer does not play Opus/WebM. `"devProxy": "socks5h://…"`
+  sends every request through that proxy, debug builds only (release ignores
+  it); for testing the core from a machine where YouTube Music is blocked.
 - Commands, args and results are the daemon IPC ones (`dispatch.rs`,
   `player/commands.rs`, `api/*`); an error reply is a JSON string
   `"<kind>: <message>"`. Mobile networking is direct only: `net_apply` with a

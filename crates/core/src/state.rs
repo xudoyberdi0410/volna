@@ -112,6 +112,8 @@ pub struct AppState {
     pub palettes: Arc<crate::api::color::Palettes>,
     /// Base URL of the loopback audio server, once it is running.
     pub stream_base: Option<String>,
+    /// The codecs the player takes (stream URLs and prefetches ask for them).
+    pub codec: volna_streams::Codec,
 }
 
 impl AppState {
@@ -135,6 +137,7 @@ impl AppState {
             images,
             palettes: Arc::default(),
             stream_base: None,
+            codec: volna_streams::Codec::default(),
         })
     }
 

@@ -55,6 +55,7 @@ pub fn setup<O: Output>(
     let handle = output.map(|output| {
         let hooks = hooks::AppHooks {
             stream_base: state.stream_base.clone(),
+            codec: state.codec,
             streams: state.streams.clone(),
             wave: wave.engine(),
             ytm: wave.ytm().clone(),

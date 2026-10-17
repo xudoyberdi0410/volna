@@ -41,7 +41,8 @@ extern "C" {
 #endif // __cplusplus
 
 // Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-// "audioServer": true?, "log": "info"?}`. Returns NULL on failure; the
+// "audioServer": true?, "log": "info"?, "codec": "aac"?, "devProxy": "…"?}`
+// (`devProxy`: debug builds only). Returns NULL on failure; the
 // reason is then in [`volna_core_last_error`] on the same thread.
 //
 // # Safety

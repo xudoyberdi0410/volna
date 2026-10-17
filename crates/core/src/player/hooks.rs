@@ -8,7 +8,7 @@ use volna_player::{
     ErrorKind, FailureInfo, Hooks, MoreRequest, Origin, PlayEvent, PlayEventOutcome, PlayerTrack,
     Quality, StreamInfo, TrackInput,
 };
-use volna_streams::{FailureKind, VideoId};
+use volna_streams::{Codec, FailureKind, VideoId};
 use volna_wave::{PlayerEvent as WaveEvent, Wave, YtmSource};
 use volna_ytm::YtmClient;
 
@@ -19,6 +19,8 @@ use crate::state::Streams;
 
 pub struct AppHooks {
     pub stream_base: Option<String>,
+    /// `AacOnly` adds `codec=aac` to the stream URLs (AVPlayer).
+    pub codec: Codec,
     pub streams: Option<Streams>,
     pub wave: Arc<Wave<YtmSource>>,
     pub ytm: YtmClient,
@@ -29,10 +31,27 @@ pub struct AppHooks {
     pub scrobble: volna_scrobble::Scrobbling,
 }
 
-fn quality(q: Quality) -> volna_streams::Quality {
-    match q {
+fn quality(q: Quality, codec: Codec) -> volna_streams::Quality {
+    let tier = match q {
         Quality::High => volna_streams::Quality::High,
         Quality::Low => volna_streams::Quality::Low,
+    };
+    tier.with_codec(codec)
+}
+
+/// `<base>/<id>[?q=low][&codec=aac]`, as `LoopbackServer` parses it.
+fn stream_url(base: &str, id: &str, q: Quality, codec: Codec) -> String {
+    let mut params = Vec::new();
+    if q == Quality::Low {
+        params.push("q=low");
+    }
+    if codec == Codec::AacOnly {
+        params.push("codec=aac");
+    }
+    if params.is_empty() {
+        format!("{base}/{id}")
+    } else {
+        format!("{base}/{id}?{}", params.join("&"))
     }
 }
 
@@ -98,15 +117,12 @@ impl Hooks for AppHooks {
     fn stream_uri(&self, t: &PlayerTrack, q: Quality) -> Option<String> {
         self.streams.as_ref()?;
         let base = self.stream_base.as_ref()?;
-        Some(match q {
-            Quality::High => format!("{base}/{}", t.id),
-            Quality::Low => format!("{base}/{}?q=low", t.id),
-        })
+        Some(stream_url(base, &t.id, q, self.codec))
     }
 
     fn prefetch(&self, t: &PlayerTrack, q: Quality) {
         if let (Some(streams), Ok(id)) = (&self.streams, VideoId::parse(&t.id)) {
-            streams.prefetch(id, quality(q));
+            streams.prefetch(id, quality(q, self.codec));
         }
     }
 
@@ -133,7 +149,7 @@ impl Hooks for AppHooks {
         let streams = self.streams.as_ref()?;
         let id = VideoId::parse(track_id).ok()?;
         // Cached by the resolve the audio server just did.
-        let s = streams.resolve(&id, quality(q)).await.ok()?;
+        let s = streams.resolve(&id, quality(q, self.codec)).await.ok()?;
         Some(StreamInfo {
             codec: s.codec.as_deref().map(|c| {
                 if c.starts_with("mp4a") {
@@ -308,4 +324,27 @@ fn fastrand_index(n: usize) -> usize {
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
     nanos as usize % n.max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_urls_carry_tier_and_codec() {
+        let b = "http://127.0.0.1:1/t/stream";
+        let id = "dQw4w9WgXcQ";
+        assert_eq!(stream_url(b, id, Quality::High, Codec::PreferOpus), format!("{b}/{id}"));
+        assert_eq!(stream_url(b, id, Quality::Low, Codec::PreferOpus), format!("{b}/{id}?q=low"));
+        assert_eq!(stream_url(b, id, Quality::High, Codec::AacOnly), format!("{b}/{id}?codec=aac"));
+        assert_eq!(
+            stream_url(b, id, Quality::Low, Codec::AacOnly),
+            format!("{b}/{id}?q=low&codec=aac")
+        );
+        // What the audio server makes of them.
+        assert_eq!(
+            volna_streams::Quality::from_params(Some("low"), Some("aac")),
+            quality(Quality::Low, Codec::AacOnly)
+        );
+    }
 }

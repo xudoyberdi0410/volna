@@ -110,6 +110,11 @@ void volna_core_shutdown(VolnaCore *);
   every few hundred ms while playing, `{"type":"buffering","on"}`, `ended`,
   `{"type":"error","message","decode"?}`. Reports are about the latest load.
   The core sends `stop` before loading the next item.
+- YouTube sign-in (feature `innertube`): `youtube_set_cookies {cookies}` with the
+  sign-in WebView's cookies as Netscape text (`""` signs out) and
+  `youtube_auth_status`, both → `{signedIn, account?}`. Saved in
+  `<dataDir>/youtube-cookies.txt` (0600) and loaded at init; what to export is in
+  `docs/streams.md` ("YouTube session on mobile").
 - JS jobs (for the mobile stream resolver): load `volna_core_js_prelude()` once
   into a WebView page that stays alive (BotGuard needs a real DOM); then for each
   job evaluate `volnaJs(<request_json>)` and pass the string it resolves to,
@@ -121,8 +126,7 @@ void volna_core_shutdown(VolnaCore *);
 ## Not done
 
 - The InnerTube resolver ran only against Deno + jsdom on desktop
-  (`docs/streams.md`); no Android WebView / WKWebView host exists yet. Cookies are
-  set once at init (`youtubeCookies`); there is no command to change them later.
+  (`docs/streams.md`); no Android WebView / WKWebView host exists yet.
 - On the platform player there is no crossfade, gapless handoff, EQ or
   visualizer (the output is single-deck; `player_set_dsp` is stored but not
   applied; visualizer frames are never sent). Fades jump to their target volume.

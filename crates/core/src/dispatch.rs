@@ -86,6 +86,12 @@ pub async fn call(
             out(wave::wave_event(w, ev).await)
         }
         "wave_sync_likes" => out(wave::wave_sync_likes(w, arg(a, "tracks")?).await),
+        #[cfg(feature = "innertube")]
+        "youtube_set_cookies" => {
+            out(crate::youtube::youtube_set_cookies(d, arg(a, "cookies")?).await)
+        }
+        #[cfg(feature = "innertube")]
+        "youtube_auth_status" => out(crate::youtube::youtube_auth_status(d).await),
         other => Err(format!("unknown command {other}")),
     }
 }

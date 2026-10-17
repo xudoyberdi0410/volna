@@ -203,8 +203,9 @@ struct InitConfig {
     #[serde(default)]
     dev_stream_url: Option<String>,
     /// The signed-in YouTube session for stream resolution, as a Netscape
-    /// cookies.txt (from the login WebView's cookie store). Without it
-    /// YouTube often answers with its bot check.
+    /// cookies.txt (from the login WebView's cookie store). Optional: it
+    /// replaces the session saved by `youtube_set_cookies`, which is
+    /// loaded otherwise. Without any, YouTube often answers with its bot check.
     #[cfg_attr(not(feature = "innertube"), allow(dead_code))]
     #[serde(default)]
     youtube_cookies: Option<String>,
@@ -612,7 +613,7 @@ fn stream_backend(
     dirs: &Dirs,
     cookies: Option<&str>,
 ) -> Option<crate::StreamBackend> {
-    use volna_streams::innertube::{CookieJar, InnerTube, InnerTubeOptions};
+    use volna_streams::innertube::{InnerTube, InnerTubeOptions};
     let backend = InnerTube::new(
         js.clone(),
         InnerTubeOptions {
@@ -620,8 +621,15 @@ fn stream_backend(
             ..Default::default()
         },
     );
-    backend.set_cookies(cookies.map(CookieJar::from_netscape));
-    Some(crate::StreamBackend::injected(backend))
+    // Cookies given at init replace the saved session; `youtube_set_cookies`
+    // changes it later.
+    if let Some(text) = cookies
+        && let Err(e) = crate::youtube::save_cookies(&dirs.data, text)
+    {
+        tracing::warn!("cannot save the YouTube cookies: {e}");
+    }
+    backend.set_cookies(crate::youtube::load_cookies(&dirs.data));
+    Some(crate::StreamBackend::InnerTube(backend))
 }
 
 #[cfg(not(feature = "innertube"))]

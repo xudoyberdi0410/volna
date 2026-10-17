@@ -7,16 +7,16 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/color.dart';
-import '../ipc/proto_image.dart';
 import '../ipc/transport.dart';
 import 'connection.dart';
+import 'images.dart';
 import 'player.dart';
 import 'theme.dart';
 
 final colorApiProvider = Provider((ref) => ColorApi(ref.watch(transportProvider)));
 
-/// Image bytes through `volna://img/` (proxy applies), memory + disk LRU.
-final imageCacheProvider = Provider((ref) => ProtoImageCache(ref.watch(transportProvider)));
+/// Image bytes through `volna://img/` (proxy applies): the app's one cache.
+final imageCacheProvider = protoImageCacheProvider;
 
 final paletteProvider = FutureProvider.family<Palette?, String>((ref, cover) async {
   try {

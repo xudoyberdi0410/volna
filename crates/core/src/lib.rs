@@ -25,6 +25,8 @@ pub mod settings;
 pub mod shape;
 pub mod state;
 pub mod wave;
+#[cfg(feature = "innertube")]
+pub mod youtube;
 
 pub use crate::core::{Core, CoreConfig, Dirs, IDENTIFIER};
 pub use state::{AppState, StreamBackend};

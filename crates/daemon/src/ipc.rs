@@ -381,6 +381,66 @@ mod tests {
         );
     }
 
+    /// Byte fixtures shared with the Flutter client (`app/test/frame_test.dart`):
+    /// change both sides together.
+    const FIXTURE_HELLO: &str = "2a000000000000007b2274223a2268656c6c6f222c22726f6c65223a2277696e646f77222c22746f6b656e223a6e756c6c7d";
+    const FIXTURE_PROTO: &str = "62000000020000007b2274223a2270726f746f222c226964223a322c226d6574686f64223a22474554222c22757269223a22766f6c6e613a2f2f696d672f3f753d7826733d3634222c2268656164657273223a5b5b22616363657074222c22696d6167652f2a225d5d7ddead";
+    const FIXTURE_PROTO_REPLY: &str = "50000000030000007b2274223a2270726f746f5f7265706c79222c226964223a322c22737461747573223a3230302c2268656164657273223a5b5b22636f6e74656e742d74797065222c22696d6167652f706e67225d5d7d010203";
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn frames_match_the_dart_fixtures() {
+        let cases = [
+            (
+                FIXTURE_HELLO,
+                Frame::from(Msg::Hello {
+                    role: Role::Window,
+                    token: None,
+                }),
+            ),
+            (
+                FIXTURE_PROTO,
+                Frame {
+                    msg: Msg::Proto {
+                        id: 2,
+                        method: "GET".into(),
+                        uri: "volna://img/?u=x&s=64".into(),
+                        headers: vec![("accept".into(), "image/*".into())],
+                    },
+                    body: vec![0xde, 0xad],
+                },
+            ),
+            (
+                FIXTURE_PROTO_REPLY,
+                Frame {
+                    msg: Msg::ProtoReply {
+                        id: 2,
+                        status: 200,
+                        headers: vec![("content-type".into(), "image/png".into())],
+                    },
+                    body: vec![1, 2, 3],
+                },
+            ),
+        ];
+        for (fixture, frame) in cases {
+            let mut out = Vec::new();
+            write_frame(&mut out, &frame).await.unwrap();
+            assert_eq!(hex(&out), fixture);
+            let bytes = unhex(fixture);
+            assert_eq!(read_frame(&mut bytes.as_slice()).await.unwrap(), frame);
+        }
+    }
+
     #[tokio::test]
     async fn oversized_frames_are_refused() {
         let (mut a, mut b) = tokio::io::duplex(64);

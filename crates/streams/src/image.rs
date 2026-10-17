@@ -45,12 +45,7 @@ impl<N: Network> ImageCache<N> {
     /// Returns the image at `raw_url`, resized to `size` px where the host
     /// supports it (`lh3.googleusercontent.com` style `=w…-h…` suffixes).
     pub async fn get(&self, raw_url: &str, size: Option<u32>) -> Result<Image> {
-        let url = check_url(raw_url)?;
-        let url = match size {
-            Some(s) => resize(url, s),
-            None => url,
-        };
-        let path = self.dir.join(cache_name(url.as_str()));
+        let (url, path) = self.locate(raw_url, size)?;
 
         if let Ok(bytes) = tokio::fs::read(&path).await
             && let Some(content_type) = sniff(&bytes)
@@ -72,6 +67,33 @@ impl<N: Network> ImageCache<N> {
             bytes,
             from_cache: false,
         })
+    }
+
+    /// Like [`Self::get`], but returns the cache file (fetched if missing),
+    /// for consumers that want a `file://` URL (MPRIS `mpris:artUrl`).
+    /// The file has no extension; its content is a JPEG/PNG/WebP image.
+    pub async fn get_path(&self, raw_url: &str, size: Option<u32>) -> Result<PathBuf> {
+        let (url, path) = self.locate(raw_url, size)?;
+        if tokio::fs::metadata(&path).await.is_ok_and(|m| m.len() > 0) {
+            return Ok(path);
+        }
+        let bytes = self.download(&url).await?;
+        sniff(&bytes).ok_or(StreamError::UpstreamStatus(200))?;
+        // No dedicated error kind for a full disk; callers only log it.
+        self.store(&path, &bytes).await.map_err(|e| {
+            StreamError::InvalidUrl(format!("cannot cache {}: {e}", path.display()))
+        })?;
+        Ok(path)
+    }
+
+    fn locate(&self, raw_url: &str, size: Option<u32>) -> Result<(Url, PathBuf)> {
+        let url = check_url(raw_url)?;
+        let url = match size {
+            Some(s) => resize(url, s),
+            None => url,
+        };
+        let path = self.dir.join(cache_name(url.as_str()));
+        Ok((url, path))
     }
 
     async fn download(&self, url: &Url) -> Result<Bytes> {

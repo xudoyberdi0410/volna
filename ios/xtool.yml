@@ -1,0 +1,5 @@
+version: 1
+bundleID: uz.khudoberdi.volna
+product: Volna
+# Merged into the generated Info.plist.
+infoPath: Info.plist

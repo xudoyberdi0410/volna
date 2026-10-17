@@ -18,7 +18,7 @@ let libs = Context.packageDirectory + "/Libs"
 let package = Package(
     name: "Volna",
     platforms: [
-        .iOS(.v17),
+        .iOS("26.0"),
         .macOS(.v14),
     ],
     products: [

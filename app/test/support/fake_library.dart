@@ -3,7 +3,7 @@
 /// `library_changed` like the daemon.
 library;
 
-import 'fake_transport_browse.dart';
+import 'fake_transport.dart';
 
 class FakeLibrary {
   final FakeTransport t;

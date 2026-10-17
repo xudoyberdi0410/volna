@@ -5,7 +5,7 @@ import 'package:volna/state/connection.dart';
 import 'package:volna/state/library.dart';
 
 import 'support/fake_library.dart';
-import 'support/fake_transport_browse.dart';
+import 'support/fake_transport.dart';
 
 const _track = Track(
   videoId: 'abc',

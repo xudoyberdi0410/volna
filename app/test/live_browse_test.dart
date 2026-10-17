@@ -1,8 +1,9 @@
 /// End to end through the real screens against a running daemon:
 /// search → album → play (muted) → like → the track is in the library.
 ///
-/// Skipped unless `VOLNA_LIVE_SOCKET` names the socket of an isolated test
-/// daemon (never the user's). `VOLNA_LIVE_SHOTS=<dir>` saves screenshots.
+/// Opt-in: `VOLNA_LIVE=1` and `VOLNA_LIVE_SOCKET` (= `VOLNA_SOCKET`) naming
+/// the socket of an isolated test daemon, never the user's: it plays (muted)
+/// and likes. `VOLNA_LIVE_SHOTS=<dir>` saves screenshots.
 @Tags(['live'])
 library;
 
@@ -18,19 +19,23 @@ import 'package:volna/ipc/proto_image.dart';
 import 'package:volna/ipc/socket_transport.dart';
 import 'package:volna/state/connection.dart';
 import 'package:volna/ui/browse/routes.dart';
+import 'package:volna/ui/theme/app_theme.dart';
 import 'package:volna/ui/widgets/cards.dart';
 import 'package:volna/ui/widgets/cover.dart';
 import 'package:volna/ui/widgets/track_row.dart';
 
-import 'support/browse_harness.dart';
+import 'support/test_app.dart' show loadAppFonts;
 
 void main() {
+  final live = Platform.environment['VOLNA_LIVE'] == '1';
   final socket = Platform.environment['VOLNA_LIVE_SOCKET'];
   final shots = Platform.environment['VOLNA_LIVE_SHOTS'];
 
   testWidgets('search → album → play → like → library', (tester) async {
-    await loadFonts();
-    setSize(tester, const Size(1280, 860));
+    await loadAppFonts();
+    tester.view.physicalSize = const Size(1280, 860);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     // The transport resolves VOLNA_SOCKET; it must be the same isolated socket.
     expect(socketPath(), socket);
     final t = SocketTransport()..start();
@@ -72,7 +77,7 @@ void main() {
         ],
         child: MaterialApp.router(
           debugShowCheckedModeBanner: false,
-          theme: browseTheme(Brightness.dark),
+          theme: buildTheme(Brightness.dark),
           builder: (context, child) => ColoredBox(color: Theme.of(context).colorScheme.surface, child: child),
           routerConfig: router,
         ),
@@ -115,5 +120,5 @@ void main() {
       await t.call('player_stop');
       await t.close();
     });
-  }, skip: socket == null); // needs VOLNA_LIVE_SOCKET (an isolated daemon)
+  }, skip: !live || socket == null); // VOLNA_LIVE=1 + VOLNA_LIVE_SOCKET (an isolated daemon)
 }

@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
-import 'package:volna/ui/browse/routes.dart';
 
 import 'support/browse_fixtures.dart';
 import 'support/browse_harness.dart';
@@ -12,18 +10,10 @@ Future<void> pumpFor(WidgetTester tester, [int frames = 6]) async {
   }
 }
 
-Future<GoRouter> mount(WidgetTester tester, String location, {Size size = const Size(1280, 900)}) async {
-  setSize(tester, size);
-  final router = GoRouter(initialLocation: location, routes: browseRoutes);
-  addTearDown(router.dispose);
-  return router;
-}
-
 void main() {
   testWidgets('search: suggestions, filter chips, paging with the same filter', (tester) async {
     final (t, _) = browseTransport(images: false);
-    final router = await mount(tester, '/search');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '/search', router: router));
+    await pumpBrowse(tester, t, '/search');
     await pumpFor(tester);
     expect(find.text('Что послушаем?'), findsOneWidget);
 
@@ -51,8 +41,7 @@ void main() {
 
   testWidgets('album: a row plays the album from it; like and play next', (tester) async {
     final (t, _) = browseTransport(images: false);
-    final router = await mount(tester, '/album/MPREb_prosti');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/album/MPREb_prosti');
     await pumpFor(tester);
     expect(find.text('Прости меня моя любовь'), findsWidgets);
     expect(t.callsOf('catalog_album').single.args['id'], 'MPREb_prosti');
@@ -86,8 +75,7 @@ void main() {
 
   testWidgets('playlist pages in with catalog_playlist_more', (tester) async {
     final (t, _) = browseTransport(images: false);
-    final router = await mount(tester, '/playlist/RDCLAK5uy_rusrock', size: const Size(1280, 2000));
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/playlist/RDCLAK5uy_rusrock', size: const Size(1280, 2000));
     await pumpFor(tester, 10);
     expect(t.callsOf('catalog_playlist_more').single.args['continuation'], 'CONT-1');
     expect(find.text('Орбит без сахара'), findsOneWidget);
@@ -95,8 +83,7 @@ void main() {
 
   testWidgets('library: liked tracks follow library_changed', (tester) async {
     final (t, lib) = browseTransport(images: false);
-    final router = await mount(tester, '/library');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    final router = await pumpBrowse(tester, t, '/library');
     await pumpFor(tester);
     expect(find.text('6 треков'), findsOneWidget);
     expect(find.text('В дорогу'), findsOneWidget, reason: 'pinned');
@@ -116,8 +103,7 @@ void main() {
 
   testWidgets('user playlist: rename and remove a track', (tester) async {
     final (t, lib) = browseTransport(images: false);
-    final router = await mount(tester, '/library/playlist/pl-road');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/library/playlist/pl-road');
     await pumpFor(tester);
     expect(find.text('В дорогу'), findsOneWidget);
 
@@ -140,8 +126,7 @@ void main() {
 
   testWidgets('add to playlist from a track menu', (tester) async {
     final (t, lib) = browseTransport(images: false);
-    final router = await mount(tester, '/album/MPREb_prosti');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/album/MPREb_prosti');
     await pumpFor(tester);
     await tester.tap(find.byTooltip('Ещё').at(1));
     await pumpFor(tester);
@@ -158,8 +143,7 @@ void main() {
 
   testWidgets('history groups by day and clears', (tester) async {
     final (t, lib) = browseTransport(images: false);
-    final router = await mount(tester, '/history');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/history');
     await pumpFor(tester);
     expect(find.text('Сегодня'), findsOneWidget);
     expect(find.text('Вчера'), findsOneWidget);
@@ -176,8 +160,7 @@ void main() {
     final (t, _) = browseTransport(images: false);
     var fail = true;
     t.on('catalog_artist', (a) => fail ? throw Exception('boom') : artistJson);
-    final router = await mount(tester, '/artist/UCzemfira');
-    await tester.pumpWidget(BrowseTestApp(transport: t, location: '', router: router));
+    await pumpBrowse(tester, t, '/artist/UCzemfira');
     await pumpFor(tester);
     expect(find.text('Повторить'), findsOneWidget);
     fail = false;

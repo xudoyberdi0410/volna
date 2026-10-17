@@ -2,9 +2,12 @@
 /// screens' tests and goldens.
 library;
 
+import 'package:volna/ipc/transport.dart';
+
 import 'fake_library.dart';
 import 'fake_png.dart';
-import 'fake_transport_browse.dart';
+import 'fake_transport.dart';
+import 'test_app.dart' show kTestNow;
 
 typedef J = Map<String, Object?>;
 
@@ -300,10 +303,7 @@ final moodsJson = <J>[
   t.on('catalog_home', (a) => homeJson);
   t.on('catalog_moods', (a) => moodsJson);
   t.on('catalog_mood', (a) => [homeJson[3]]);
-  t.on('player_snapshot', (a) => throw Exception('no player in tests'));
-  t.on('player_set_queue', (a) => {'rev': 1});
-  t.on('player_enqueue', (a) => {'rev': 2});
-  t.on('player_set_shuffle', (a) => {'rev': 3});
+  FakePlayer(t);
 
   final lib = FakeLibrary(t);
   final pl = (playlistJson['tracks'] as List).cast<J>();
@@ -327,7 +327,7 @@ final moodsJson = <J>[
     {'kind': 'artist', 'id': 'UCzemfira', 'title': 'Земфира', 'thumbnail': 'https://lh3.googleusercontent.com/UCzemfira=w544-h544', 'pinnedAt': at},
     {'kind': 'album', 'id': 'MPREb_prosti', 'title': 'Прости меня моя любовь', 'thumbnail': 'https://lh3.googleusercontent.com/MPREb_prosti=w544-h544', 'pinnedAt': at},
   ]);
-  final now = DateTime(2026, 10, 17, 21, 30).millisecondsSinceEpoch;
+  final now = kTestNow;
   const hour = 3600 * 1000;
   lib.history.addAll([
     {'track': pl[3], 'playedAt': now - hour ~/ 4},
@@ -338,9 +338,9 @@ final moodsJson = <J>[
     {'track': pl[4], 'playedAt': now - 5 * 24 * hour},
   ]);
   if (images) {
-    t.images = (uri) {
+    t.protoFallback = (uri) {
       final u = Uri.parse(uri).queryParameters['u'] ?? uri;
-      return fakeCover(u.split('=').first);
+      return ProtoResponse(200, const [('content-type', 'image/png')], fakeCover(u.split('=').first));
     };
   }
   return (t, lib);

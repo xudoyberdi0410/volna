@@ -1,6 +1,6 @@
 /// Screenshots of the browse screens with fixture data. Regenerate with
-/// `flutter test --update-goldens test/goldens`. Skipped without the system
-/// fonts they are drawn with (Noto Sans + the SDK's Material Icons).
+/// `flutter test --update-goldens test/goldens/browse_golden_test.dart`; the
+/// screens are drawn inside the real app shell with the bundled Inter.
 @Tags(['golden'])
 library;
 
@@ -9,27 +9,22 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/browse_fixtures.dart';
 import '../support/browse_harness.dart';
+import '../support/test_app.dart';
 
 void main() {
-  late bool fonts;
-  setUpAll(() async => fonts = await loadFonts());
+  setUpAll(loadAppFonts);
 
-  const desktop = Size(1280, 860);
+  const desktop = Size(1440, 900);
   const phone = Size(400, 860);
 
   Future<void> shot(WidgetTester tester, String location, String name,
       {Size size = desktop, Brightness brightness = Brightness.dark, Future<void> Function()? before}) async {
-    if (!fonts) {
-      markTestSkipped('system fonts not found');
-      return;
-    }
-    setSize(tester, size);
     // Real shadows; the binding checks the flag is back before the test ends.
     debugDisableShadows = false;
     try {
       final (t, _) = browseTransport();
-      await tester.pumpWidget(BrowseTestApp(transport: t, location: location, brightness: brightness));
-      await settle(tester);
+      await pumpBrowse(tester, t, location,
+          size: size, theme: brightness == Brightness.dark ? ThemeMode.dark : ThemeMode.light);
       if (before != null) {
         await before();
         await settle(tester);

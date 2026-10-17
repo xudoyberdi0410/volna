@@ -34,6 +34,8 @@ const LOGIN_WINDOW: &str = "yandex-login";
 const LIKES_KIND: i64 = 3;
 /// How many ids one `POST /tracks` gets.
 const TRACKS_BATCH: usize = 250;
+/// 429 retries per request: pauses of 2, 4, 8, 16 and 32 s.
+const RATE_LIMIT_RETRIES: usize = 5;
 
 /// Managed state: the token of the last sign-in, kept for the app's lifetime.
 #[derive(Default)]
@@ -399,7 +401,23 @@ struct Client {
 }
 
 impl Client {
+    /// Waits out 429s (the API rate-limits bursts) with growing pauses.
     async fn send(&self, path: &str, form: Option<String>) -> Result<Value, ApiError> {
+        let mut pause = Duration::from_secs(2);
+        for _ in 0..RATE_LIMIT_RETRIES {
+            match self.send_once(path, form.clone()).await {
+                Err(ApiError::Status { status: 429, .. }) => {
+                    tracing::info!("yandex: rate-limited on {path}, waiting {pause:?}");
+                    tokio::time::sleep(pause).await;
+                    pause *= 2;
+                }
+                other => return other,
+            }
+        }
+        self.send_once(path, form).await
+    }
+
+    async fn send_once(&self, path: &str, form: Option<String>) -> Result<Value, ApiError> {
         let url = format!("{API}{path}");
         let req = match form {
             Some(body) => self

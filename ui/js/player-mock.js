@@ -45,7 +45,12 @@ function err(code, message) {
 
 /** The engine. Separate from the bridge so tests can drive it with a fake clock. */
 export class MockEngine {
-    constructor({ now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout, emit = () => {} } = {}) {
+    constructor({
+        now = () => Date.now(),
+        setTimer = (fn, ms) => setTimeout(() => fn(), ms),
+        clearTimer = (id) => clearTimeout(id),
+        emit = () => {},
+    } = {}) {
         this.now = now;
         this.setTimer = setTimer;
         this.clearTimer = clearTimer;

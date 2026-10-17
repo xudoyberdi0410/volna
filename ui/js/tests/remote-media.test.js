@@ -150,7 +150,7 @@ describe('RemoteMediaElement', () => {
         expect(el.currentTime).toBe(200);
         expect(events).toEqual(['seeking']);
         await new Promise((r) => setTimeout(r, 0));
-        expect(controller.seek).toHaveBeenCalledWith(200);
+        expect(controller.seek).toHaveBeenCalledWith(200, {});
         expect(events).toEqual(['seeking', 'seeked']);
 
         el.volume = 2;
@@ -171,6 +171,6 @@ describe('RemoteMediaElement', () => {
         el.applyState(base);
         const req = new CustomEvent('exact-seek-request', { cancelable: true, detail: { time: 30 } });
         if (el.dispatchEvent(req)) el.currentTime = 30;
-        return new Promise((r) => setTimeout(r, 0)).then(() => expect(controller.seek).toHaveBeenCalledWith(30));
+        return new Promise((r) => setTimeout(r, 0)).then(() => expect(controller.seek).toHaveBeenCalledWith(30, {}));
     });
 });

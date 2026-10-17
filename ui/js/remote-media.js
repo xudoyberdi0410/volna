@@ -66,14 +66,19 @@ export class RemoteMediaElement extends EventTarget {
     }
 
     set currentTime(value) {
+        void this.seek(value);
+    }
+
+    /** Seeks (optimistically: currentTime moves right away). Resolves after `seeked`. */
+    seek(value, opts = {}) {
         const t = Math.max(0, Number(value) || 0);
         const d = this._s.duration;
         const target = d > 0 ? Math.min(t, d) : t;
         this._p = { ...this._p, position: target, at: this._now() };
         this._fire('seeking');
         this._fire('timeupdate');
-        Promise.resolve()
-            .then(() => this._c.seek(target))
+        return Promise.resolve()
+            .then(() => this._c.seek(target, opts))
             .catch((e) => console.warn('[player] seek failed', e))
             .finally(() => this._fire('seeked'));
     }

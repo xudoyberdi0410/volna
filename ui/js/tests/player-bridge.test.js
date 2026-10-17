@@ -71,7 +71,7 @@ describe('TauriBridge FIFO', () => {
     it('evaluates lazy arguments when the command is sent, and SKIP drops it', async () => {
         const { calls, pending, bridge } = fakeTauri();
         let uid = null;
-        bridge.call('player_set_queue', { tracks: [] });
+        void bridge.call('player_set_queue', { tracks: [] });
         const p = bridge.call('player_play_uid', async () => ({ uid }));
         const s = bridge.call('player_move', () => SKIP);
         const n = bridge.call('player_next');

@@ -44,13 +44,17 @@ export function parseError(error) {
 export class SerialBridge {
     constructor() {
         this._tail = Promise.resolve();
+        /** Called with (cmd, reply) before the call resolves and before the next one is sent. */
+        this.onReply = null;
     }
 
     call(cmd, args) {
         const run = async () => {
             const resolved = typeof args === 'function' ? await args() : args;
             if (resolved === SKIP) return null;
-            return this._invoke(cmd, resolved ?? {});
+            const reply = await this._invoke(cmd, resolved ?? {});
+            this.onReply?.(cmd, reply);
+            return reply;
         };
         const p = this._tail.then(run);
         this._tail = p.then(

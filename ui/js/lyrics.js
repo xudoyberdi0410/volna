@@ -26,28 +26,15 @@ function applyBlurEffectsPreferenceToLyrics() {
 
 window.addEventListener('disable-blur-effects-changed', applyBlurEffectsPreferenceToLyrics);
 
-// am-lyrics is loaded once the page's images are in, so it does not compete
-// with them. Lazy covers below the fold may never load, so they are skipped
-// and the wait is capped (the same rule as the player's start-up).
-const loadAmLyrics = () => {
-    const pending = Array.from(document.images).filter((img) => !img.complete && img.loading !== 'lazy');
-    const loaded = pending.map(
-        (img) =>
-            new Promise((res) => {
-                img.addEventListener('load', res, { once: true });
-                img.addEventListener('error', res, { once: true });
-            })
-    );
-    const capped = new Promise((res) => setTimeout(res, 3000));
-    void Promise.race([Promise.all(loaded), capped])
-        .then(() => import('@uimaxbai/am-lyrics/am-lyrics.js'))
-        .catch(console.error);
-};
-
-if (document.readyState === 'complete') {
-    loadAmLyrics();
-} else {
-    window.addEventListener('load', loadAmLyrics);
+// am-lyrics (a web component with its own providers) is loaded the first time
+// lyrics are shown; most sessions never open them.
+let amLyricsModule = null;
+function loadAmLyrics() {
+    amLyricsModule ??= import('@uimaxbai/am-lyrics/am-lyrics.js').catch((e) => {
+        amLyricsModule = null;
+        console.error(e);
+    });
+    return amLyricsModule;
 }
 
 // Check if text contains Japanese, Chinese, or Korean characters
@@ -462,6 +449,7 @@ export class LyricsManager {
         if (this.componentLoaded) return;
 
         if (typeof customElements !== 'undefined') {
+            void loadAmLyrics();
             await customElements.whenDefined('am-lyrics');
             this.componentLoaded = true;
         }
@@ -1218,6 +1206,7 @@ async function renderLyricsComponent(container, track, audioPlayer, lyricsManage
         }
 
         container.innerHTML = '';
+        void loadAmLyrics(); // the element upgrades once the module is in
         const amLyrics = document.createElement('am-lyrics');
         amLyrics.setAttribute('song-title', queryTitle);
         amLyrics.setAttribute('song-artist', queryArtist);

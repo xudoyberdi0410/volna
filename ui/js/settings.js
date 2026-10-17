@@ -5578,6 +5578,10 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         if (butterchurnDurationSetting) butterchurnDurationSetting.style.display = showSubSettings ? 'flex' : 'none';
         if (butterchurnRandomizeSetting) butterchurnRandomizeSetting.style.display = showSubSettings ? 'flex' : 'none';
 
+        // Importing butterchurn pulls in ~1 MB of presets; only do it when
+        // its settings are actually on screen.
+        if (!show) return;
+
         // Populate preset list using module-level cache (works even before visualizer initializes)
         const { keys: presetNames } = await getButterchurnPresets();
         const select = butterchurnSpecificPresetSelect;
@@ -5698,12 +5702,8 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         await updateButterchurnSettingsVisibility();
     });
 
-    // Check if presets already cached and update immediately
-    const { keys: cachedKeys } = await getButterchurnPresets();
-    if (cachedKeys.length > 0) {
-        console.log('[Settings] Presets already cached, updating dropdown immediately');
-        await updateButterchurnSettingsVisibility();
-    }
+    // Fill the preset list now if Butterchurn is the selected visualizer.
+    await updateButterchurnSettingsVisibility();
 
     // Watch for appearance tab becoming active and refresh presets
     const appearanceTabContent = document.getElementById('settings-tab-appearance');

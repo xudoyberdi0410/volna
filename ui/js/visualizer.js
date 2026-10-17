@@ -1,6 +1,13 @@
 // js/visualizer.js
+// Draws the visualizer presets. The analysis runs in Rust (§3.5 of
+// docs/native-player.md): while the visualizer is on screen it subscribes
+// to binary frames, which feed an AnalyserNode look-alike; when it stops or
+// the window is hidden it unsubscribes, so nothing is computed or sent.
 import { visualizerSettings } from './storage.js';
 import { audioContextManager } from './audio-context.js';
+import { Player } from './player.js';
+
+const FRAME_FPS = 60;
 
 export class Visualizer {
     constructor(canvas, audio) {
@@ -35,9 +42,9 @@ export class Visualizer {
         this._resizeBound = () => this.resize();
         this._backgroundPaused = false;
 
-        // Pause animation loop when the app is backgrounded so the analyser's
-        // FFT reads don't compete with the EQ biquad filter chain for audio
-        // thread time - the main cause of audio skipping with AutoEQ in background.
+        this._subscribed = false;
+
+        // A hidden window draws nothing: stop the loop and the frames.
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden' && this.isActive) {
                 this._backgroundPaused = true;
@@ -45,10 +52,12 @@ export class Visualizer {
                     cancelAnimationFrame(this.animationId);
                     this.animationId = null;
                 }
+                this._unsubscribe();
             } else if (document.visibilityState === 'visible' && this._backgroundPaused) {
                 this._backgroundPaused = false;
-                if (this.isActive && !this.animationId) {
-                    this.animate();
+                if (this.isActive) {
+                    this._subscribe();
+                    if (!this.animationId) this.animate();
                 }
             }
         });
@@ -78,12 +87,6 @@ export class Visualizer {
     }
 
     async init() {
-        // Ensure shared audio context is initialized
-        if (!audioContextManager.isReady()) {
-            audioContextManager.init(this.audio);
-        }
-
-        this.audioContext = audioContextManager.getAudioContext();
         this.analyser = audioContextManager.getAnalyser();
 
         this.bufferLength = this.analyser?.frequencyBinCount || 512;
@@ -92,18 +95,26 @@ export class Visualizer {
         }
     }
 
-    /**
-     * Get the shared AudioContext for external use
-     */
+    /** An OfflineAudioContext, only for presets that construct audio objects (butterchurn). */
     getAudioContext() {
+        this.audioContext ??= audioContextManager.getAudioContext();
         return this.audioContext;
     }
 
-    /**
-     * Get the source node
-     */
     getSourceNode() {
-        return audioContextManager.getSourceNode();
+        return null;
+    }
+
+    _subscribe() {
+        if (this._subscribed) return;
+        this._subscribed = true;
+        void Player.instance.startVisualizer((buf) => this.analyser?.push(buf), FRAME_FPS);
+    }
+
+    _unsubscribe() {
+        if (!this._subscribed) return;
+        this._subscribed = false;
+        void Player.instance.stopVisualizer();
     }
 
     initContext() {
@@ -158,20 +169,12 @@ export class Visualizer {
         if (!this.ctx) {
             this.initContext();
         }
-        if (!this.audioContext && !this.analyser) {
+        if (!this.analyser) {
             await this.init();
         }
 
-        const canRunWithoutAnalyser = !!this.activePreset?.managesOwnContext;
-        if (!this.analyser && !canRunWithoutAnalyser) {
-            return false;
-        }
-
         this.isActive = true;
-
-        if (this.audioContext?.state === 'suspended') {
-            await this.audioContext.resume();
-        }
+        if (document.visibilityState !== 'hidden') this._subscribe();
 
         this.updateDimming();
 
@@ -182,13 +185,13 @@ export class Visualizer {
 
         // Initialize presets that need lazy init (Butterchurn, Kawarp)
         if (this.activePreset.lazyInit) {
-            const sourceNode = audioContextManager.getSourceNode();
-            await this.activePreset.lazyInit(this.canvas, this.audioContext, sourceNode);
+            await this.activePreset.lazyInit(this.canvas, this.getAudioContext(), null);
             this.resize();
         }
 
         if (this.activePreset.managesOwnContext && this.activePreset.isInitialized === false) {
             this.isActive = false;
+            this._unsubscribe();
             this.canvas.style.display = 'none';
             window.removeEventListener('resize', this._resizeBound);
             return false;
@@ -200,6 +203,8 @@ export class Visualizer {
 
     stop() {
         this.isActive = false;
+        this._backgroundPaused = false;
+        this._unsubscribe();
 
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);
@@ -233,11 +238,12 @@ export class Visualizer {
 
         const stats = this.stats;
 
-        if (this.analyser && this.dataArray && this.audioContext) {
+        if (this.analyser && this.dataArray) {
             this.analyser.getByteFrequencyData(this.dataArray);
 
-            const volume = 10 * Math.max(this.audio.volume, 0.1);
-            const binSize = this.audioContext.sampleRate / this.analyser.fftSize;
+            // Frames are taken before the master volume (§3.5), so the volume factor is 1.
+            const volume = 10;
+            const binSize = this.analyser.context.sampleRate / this.analyser.fftSize;
             const startBin = 1;
             let numBins = Math.floor(250 / binSize);
             if (numBins < 1) numBins = 1;
@@ -336,9 +342,8 @@ export class Visualizer {
         this.initContext();
         this.resize();
 
-        if (this.presets[key].lazyInit && this.audioContext) {
-            const sourceNode = audioContextManager.getSourceNode();
-            this.presets[key].lazyInit(this.canvas, this.audioContext, sourceNode).then(() => {
+        if (this.presets[key].lazyInit && this.isActive) {
+            void this.presets[key].lazyInit(this.canvas, this.getAudioContext(), null).then(() => {
                 this.resize();
             });
         }

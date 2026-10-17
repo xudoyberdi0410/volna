@@ -4,7 +4,6 @@
  */
 import butterchurn from 'butterchurn';
 import { visualizerSettings } from '../storage.js';
-import { audioContextManager } from '../audio-context.js';
 
 // Module-level preset cache - loads immediately when this file is imported
 let cachedPresets = null;
@@ -191,7 +190,12 @@ export class ButterchurnPreset {
     /**
      * Initialize Butterchurn with the given WebGL context
      */
-    init(canvas, _gl, audioContext, sourceNode) {
+    /**
+     * Butterchurn gets an OfflineAudioContext only to construct itself; it
+     * never connects to audio. Samples come from the native player's frames
+     * in draw() (render({audioLevels})).
+     */
+    init(canvas, _gl, audioContext) {
         if (this.isInitialized) return;
 
         try {
@@ -206,10 +210,12 @@ export class ButterchurnPreset {
                 textureRatio: 1,
             });
 
-            // Connect audio source
-            if (sourceNode) {
-                this.connectAudioWithDelay(sourceNode);
-            }
+            const n = 1024;
+            this.audioLevels = {
+                timeByteArray: new Uint8Array(n),
+                timeByteArrayL: new Uint8Array(n),
+                timeByteArrayR: new Uint8Array(n),
+            };
 
             // Load initial preset
             this.loadNextPreset();
@@ -217,46 +223,14 @@ export class ButterchurnPreset {
             this.lastPresetChange = performance.now();
             this.isInitialized = true;
 
-            // Register for audio graph changes so we can reconnect when EQ is toggled
-            if (audioContextManager) {
-                this._unregisterGraphChange = audioContextManager.onGraphChange((sourceNode) => {
-                    if (sourceNode && this.isInitialized) {
-                        console.log('[Butterchurn] Audio graph changed, reconnecting...');
-                        this.connectAudioWithDelay(sourceNode);
-                    }
-                });
-            }
-
             console.log('[Butterchurn] Initialized with', this.presetKeys.length, 'presets');
         } catch (error) {
             console.error('[Butterchurn] Initialization failed:', error);
         }
     }
 
-    /**
-     * Connect audio source to the visualizer (public API)
-     */
-    connectAudio(sourceNode) {
-        if (sourceNode) {
-            this.connectAudioWithDelay(sourceNode);
-        }
-    }
-
-    /**
-     * Connect audio source with delay node for proper sync
-     * Like bc-demo.html: creates a delay node and connects visualizer to it
-     */
-    connectAudioWithDelay(sourceNode) {
-        if (!this.audioContext || !this.visualizer) return;
-
-        try {
-            // Connect visualizer directly to the source node
-            this.visualizer.connectAudio(sourceNode);
-            console.log('[Butterchurn] Audio connected');
-        } catch (error) {
-            console.warn('[Butterchurn] Failed to connect audio:', error);
-        }
-    }
+    /** Kept for callers; audio arrives as frames (see draw). */
+    connectAudio() {}
 
     /**
      * Load next preset based on settings (sequential or random)
@@ -418,7 +392,7 @@ export class ButterchurnPreset {
     /**
      * Main draw function called each animation frame
      */
-    draw(_ctx, canvas, _analyser, _dataArray, params) {
+    draw(_ctx, canvas, analyser, _dataArray, params) {
         if (!this.isInitialized) {
             return;
         }
@@ -438,9 +412,17 @@ export class ButterchurnPreset {
             }
         }
 
-        // Render the visualization
+        // Render the visualization from the latest native frame.
         try {
-            this.visualizer.render();
+            const levels = this.audioLevels;
+            if (analyser?.getByteTimeDomainDataL && levels) {
+                analyser.getByteTimeDomainData(levels.timeByteArray);
+                analyser.getByteTimeDomainDataL(levels.timeByteArrayL);
+                analyser.getByteTimeDomainDataR(levels.timeByteArrayR);
+                this.visualizer.render({ audioLevels: levels });
+            } else {
+                this.visualizer.render();
+            }
         } catch (error) {
             console.warn('[Butterchurn] Render error:', error);
         }
@@ -458,7 +440,7 @@ export class ButterchurnPreset {
     /**
      * Lazy initialization helper for when audio context becomes available
      */
-    lazyInit(canvas, audioContext, sourceNode) {
+    lazyInit(canvas, audioContext) {
         return new Promise((resolve) => {
             if (!this.isInitialized && canvas && audioContext) {
                 const gl =
@@ -473,17 +455,7 @@ export class ButterchurnPreset {
                         preserveDrawingBuffer: true,
                     });
 
-                if (gl) {
-                    this.init(canvas, gl, audioContext, null);
-
-                    // Connect audio if sourceNode is provided
-                    if (sourceNode) {
-                        this.connectAudioWithDelay(sourceNode);
-                    }
-                }
-            } else if (this.isInitialized && sourceNode) {
-                // Reconnect if source changed
-                this.connectAudioWithDelay(sourceNode);
+                if (gl) this.init(canvas, gl, audioContext);
             }
             resolve();
         });
@@ -493,11 +465,6 @@ export class ButterchurnPreset {
      * Cleanup resources
      */
     destroy() {
-        if (this._unregisterGraphChange) {
-            this._unregisterGraphChange();
-            this._unregisterGraphChange = null;
-        }
-
         if (this.visualizer && this.canvas) {
             const gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
             if (gl) {

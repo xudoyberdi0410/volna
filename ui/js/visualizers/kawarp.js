@@ -1,4 +1,5 @@
 // js/visualizers/kawarp.js
+import { Player } from '../player.js';
 
 const KAWARP_DEFAULTS = {
     warpIntensity: 1,
@@ -60,7 +61,7 @@ export class KawarpPreset {
             this.canvas = canvas;
             this.kawarp = new Kawarp(canvas, { ...KAWARP_DEFAULTS });
 
-            this.audioElement = document.getElementById('audio-player');
+            this.audioElement = Player.instance.activeElement;
             if (this.audioElement) {
                 this.audioElement.addEventListener('play', this._onPlay);
                 this.audioElement.addEventListener('pause', this._onPause);

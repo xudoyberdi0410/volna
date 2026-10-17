@@ -4797,6 +4797,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "volna-lyrics",
  "volna-net",
  "volna-player",
  "volna-streams",

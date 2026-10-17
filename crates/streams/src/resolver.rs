@@ -16,8 +16,8 @@ pub const DEFAULT_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);
 const PRUNE_THRESHOLD: usize = 256;
 
 /// Something that turns a video id into a playable stream: `YtDlp`
-/// (feature `ytdlp`) or `RustyPipeBackend` (feature `rustypipe`) in the app,
-/// a fake in tests.
+/// (feature `ytdlp`), `InnerTube` (feature `innertube`) or
+/// `RustyPipeBackend` (`crates/streams-rustypipe`, spike only), a fake in tests.
 ///
 /// `proxy` is the exit the stream will be fetched through; googlevideo binds
 /// URLs to the IP that resolved them, so a backend must resolve through it.

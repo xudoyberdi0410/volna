@@ -9,17 +9,25 @@ rust-version.workspace = true
 default = ["ytdlp"]
 # Resolve through a yt-dlp binary (desktop).
 ytdlp = ["tokio/process"]
+# Resolve in-process through InnerTube (no yt-dlp, no Python). The player's
+# JavaScript (n/sig challenges, BotGuard PO tokens) runs in a `JsRuntime` the
+# host provides: the platform WebView on mobile.
+innertube = ["dep:base64", "dep:sha1"]
+# `DenoRuntime`: that JavaScript run by Deno (desktop dev and tests only).
+innertube-deno = ["innertube", "tokio/process"]
 
 [dependencies]
 volna-net.workspace = true
+base64 = { version = "0.22", optional = true }
 bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 reqwest.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
+sha1 = { version = "0.10", optional = true }
 sha2 = "0.10"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
@@ -29,3 +37,4 @@ url.workspace = true
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
 tokio = { workspace = true, features = ["full", "test-util"] }
+tracing-subscriber.workspace = true

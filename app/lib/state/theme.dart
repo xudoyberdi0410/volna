@@ -34,3 +34,33 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
 }
 
 final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+
+const _coverColorsKey = 'volna.coverColors';
+
+/// Tint the app with the current cover's colours (default on).
+final coverColorsProvider =
+    NotifierProvider<CoverColorsController, bool>(CoverColorsController.new);
+
+class CoverColorsController extends Notifier<bool> {
+  @override
+  bool build() {
+    _load();
+    return true;
+  }
+
+  Future<void> _load() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final v = p.getBool(_coverColorsKey);
+      if (v != null && ref.mounted) state = v;
+    } catch (_) {}
+  }
+
+  Future<void> set(bool on) async {
+    state = on;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(_coverColorsKey, on);
+    } catch (_) {}
+  }
+}

@@ -20,6 +20,9 @@ ytdlp = ["volna-streams/ytdlp"]
 ffi = []
 # The JNI entry points of the Android app's Kotlin side (`src/ffi/jni.rs`).
 jni = ["ffi", "dep:jni"]
+# Mobile: resolve streams in-process (volna-streams InnerTube), with the
+# player's JavaScript run by the platform WebView through the FFI JS callback.
+innertube = ["volna-streams/innertube"]
 
 [dependencies]
 serde = { workspace = true }

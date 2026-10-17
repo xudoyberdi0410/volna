@@ -1,0 +1,25 @@
+[package]
+name = "volna-lyrics"
+description = "Lyrics provider chain (lrc.red, BiniLyrics, Unison, lyricsplus, LRCLIB, Genius, YouTube Music), TTML/LRC parsing and a SQLite cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+volna-ytm.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] }
+fastrand = "2.5"
+futures-util = "0.3"
+roxmltree = "0.20"
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use volna_player::{Player, PlayerHandle};
 
+use crate::api::library::Library;
 use crate::state::AppState;
 use crate::wave::WaveState;
 use journal::Journal;
@@ -45,6 +46,7 @@ pub fn setup(
     config: &Path,
     state: &AppState,
     wave: &WaveState,
+    library: &Arc<Library>,
     scrobble: &volna_scrobble::Scrobbling,
 ) -> PlayerState {
     let journal = Arc::new(Journal::open(&data.join("player-journal.jsonl")));
@@ -56,6 +58,7 @@ pub fn setup(
                 wave: wave.engine(),
                 ytm: wave.ytm().clone(),
                 journal: journal.clone(),
+                library: library.clone(),
                 scrobble: scrobble.clone(),
             };
             let paths = volna_player::persist::Paths {

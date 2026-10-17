@@ -27,6 +27,7 @@ import { ThemeStore } from './themeStore.js';
 import './commandPalette.js';
 import './network-settings.js';
 import { initWave } from './wave.js';
+import { importLegacyLibraryOnce } from './legacy-export.js';
 import { initYandexImport } from './yandex-import.js';
 import { installPlaybackFailureHandler } from './playback-failures.js';
 import { installJournal } from './player-journal.js';
@@ -471,6 +472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeUIInteractions(Player.instance, MusicAPI.instance, UIRenderer.instance);
     installPlaybackFailureHandler(Player.instance);
     void initWave(Player.instance, MusicAPI.instance).catch((e) => console.error('[wave] init failed', e));
+    void importLegacyLibraryOnce();
     initYandexImport({ api: MusicAPI.instance, ui: UIRenderer.instance, showMissing: showMissingTracksNotification });
     initializeKeyboardShortcuts(Player.instance, audioPlayer);
 

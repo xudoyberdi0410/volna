@@ -18,6 +18,11 @@
 //! - `scrobble_login_finish{service}` → `{username}`
 //! - `scrobble_logout{service}` → status
 //! - `scrobble_flush` → status (retry the queue now)
+//! - `scrobble_import_legacy` → status, from the keys `legacy_import` kept
+//!   (`legacy_import` itself already applies them)
+//!
+//! Love on like: `library_like{kind: track}` (Flutter) and `wave_event{like}`
+//! (old UI) call [`love_on_like`].
 
 use std::collections::HashMap;
 
@@ -71,6 +76,26 @@ pub async fn call(s: &Scrobbling, cmd: &str, a: &Value) -> Option<Result<Value, 
 /// library's `legacy_import`; the key mapping is in `volna_scrobble::legacy`.
 pub fn import_legacy(s: &Scrobbling, keys: &HashMap<String, String>) -> Result<Status, String> {
     s.import_legacy(keys)
+}
+
+/// `scrobble_import_legacy`: the scrobbler keys a `legacy_import` kept in
+/// the library database (`legacy_kv`), e.g. from before this existed.
+pub fn import_legacy_from_library(
+    s: &Scrobbling,
+    lib: &super::library::Library,
+) -> Result<Value, String> {
+    let mut keys = HashMap::new();
+    for p in super::library::legacy::LOCAL_STORAGE_PREFIXES {
+        let rows = lib
+            .store()
+            .legacy_prefixed(p)
+            .map_err(|e| format!("internal: {e}"))?;
+        keys.extend(rows);
+    }
+    if keys.is_empty() {
+        return Err("not_found: no imported scrobbler settings".into());
+    }
+    out(s.import_legacy(&keys))
 }
 
 /// As [`import_legacy`], from a JSON object (values may be parsed JSON).

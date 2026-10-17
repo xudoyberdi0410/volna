@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" itunes:timing="Line" xml:lang="en">
+  <head><metadata><ttm:agent type="person" xml:id="v1"/></metadata></head>
+  <body dur="20s">
+    <div begin="5s" end="15s">
+      <p begin="9s" end="12s" itunes:key="L2">Second line</p>
+      <p begin="5s" end="9s" itunes:key="L1">First line</p>
+      <p begin="12.5s" end="15s" itunes:key="L3">Third &amp; last</p>
+    </div>
+  </body>
+</tt>

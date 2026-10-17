@@ -45,6 +45,7 @@ import { calculateBiquadResponse, interpolate, getNormalizationOffset, runAutoEq
 import { parseRawData, TARGETS, SPEAKER_TARGETS } from './autoeq-data.js';
 import { fetchAutoEqIndex, fetchHeadphoneData, searchHeadphones, POPULAR_HEADPHONES } from './autoeq-importer.js';
 import { db } from './db.js';
+import { exportLegacyLibraryToFile } from './legacy-export.js';
 
 async function getButterchurnPresets(...args) {
     const butterchurnModule = await import('./visualizers/butterchurn.js');
@@ -6053,6 +6054,26 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         a.download = `monochrome-library-${new Date().toISOString().split('T')[0]}.json`;
         a.click();
         URL.revokeObjectURL(url);
+    });
+
+    // The whole library for the new (Flutter) window: written by the daemon.
+    document.getElementById('export-volna-library-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const original = btn.textContent;
+        btn.disabled = true;
+        try {
+            const path = await exportLegacyLibraryToFile();
+            btn.textContent = 'Saved';
+            alert(`Library saved to ${path}`);
+        } catch (err) {
+            console.error('Library export failed:', err);
+            btn.textContent = 'Error';
+        } finally {
+            setTimeout(() => {
+                btn.textContent = original;
+                btn.disabled = false;
+            }, 1500);
+        }
     });
 
     const importInput = document.getElementById('import-library-input');

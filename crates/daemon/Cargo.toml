@@ -29,6 +29,8 @@ dirs = "7"
 # `color_palette`: decode covers (the formats `ImageCache` accepts).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 mimalloc = "0.1.52"
+fastrand = "2.5"
+rusqlite = { version = "0.40", features = ["bundled"] }
 volna-ytm = { workspace = true }
 volna-net = { workspace = true }
 volna-streams = { workspace = true }

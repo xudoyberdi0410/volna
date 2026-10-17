@@ -12,8 +12,9 @@ use volna_streams::{FailureKind, VideoId};
 use volna_wave::{PlayerEvent as WaveEvent, Wave, YtmSource};
 use volna_ytm::YtmClient;
 
-use super::convert::{track_input, ytm_track};
+use super::convert::{cover_source, track_input, ytm_track};
 use super::journal::{Journal, Record};
+use crate::api::library::Library;
 use crate::state::Streams;
 
 pub struct AppHooks {
@@ -22,6 +23,8 @@ pub struct AppHooks {
     pub wave: Arc<Wave<YtmSource>>,
     pub ytm: YtmClient,
     pub journal: Arc<Journal>,
+    /// History is recorded here, not by the window.
+    pub library: Arc<Library>,
 }
 
 fn quality(q: Quality) -> volna_streams::Quality {
@@ -206,6 +209,7 @@ impl Hooks for AppHooks {
         }
         match ev {
             PlayEvent::History { track, at } => {
+                self.library.record_play(&history_track(&track), at as i64);
                 self.journal.append(Record::History { at, track });
             }
             PlayEvent::End {
@@ -239,6 +243,32 @@ impl Hooks for AppHooks {
     fn journal_seq(&self) -> u64 {
         self.journal.seq()
     }
+}
+
+/// A queue entry as a library history row: the wave's view plus the album
+/// and the cover the wave does not need.
+fn history_track(t: &volna_player::PlayerTrack) -> volna_ytm::Track {
+    let mut out = ytm_track(t);
+    out.album = t
+        .album
+        .as_ref()
+        .filter(|a| a.id.is_some() || !a.title.is_empty())
+        .map(|a| volna_ytm::AlbumRef {
+            id: a.id.clone(),
+            name: a.title.clone(),
+        });
+    out.thumbnails = t
+        .cover
+        .as_deref()
+        .and_then(cover_source)
+        .map(|url| volna_ytm::Thumbnail {
+            url,
+            width: 0,
+            height: 0,
+        })
+        .into_iter()
+        .collect();
+    out
 }
 
 fn fastrand_index(n: usize) -> usize {

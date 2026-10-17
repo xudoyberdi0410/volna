@@ -16,6 +16,7 @@ use crate::daemon::Daemon;
 
 pub mod catalog;
 pub mod color;
+pub mod library;
 pub mod lyrics;
 
 /// The handler of `cmd`, if one of these modules owns it.
@@ -24,6 +25,9 @@ pub async fn call(d: &Daemon, cmd: &str, a: &Value) -> Option<Result<Value, Stri
         return Some(r);
     }
     if let Some(r) = color::call(&d.app.palettes, &d.app.images, cmd, a).await {
+        return Some(r);
+    }
+    if let Some(r) = library::call(&d.library, cmd, a).await {
         return Some(r);
     }
     if let Some(r) = lyrics::call(d, cmd, a).await {

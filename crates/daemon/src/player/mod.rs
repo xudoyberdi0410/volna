@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use volna_player::{Player, PlayerHandle};
 
+use crate::api::library::Library;
 use crate::state::AppState;
 use crate::wave::WaveState;
 use journal::Journal;
@@ -40,7 +41,13 @@ impl PlayerState {
 
 /// Starts the engine (restoring the queue paused). Call inside the tokio
 /// runtime, after the audio server is bound.
-pub fn setup(data: &Path, config: &Path, state: &AppState, wave: &WaveState) -> PlayerState {
+pub fn setup(
+    data: &Path,
+    config: &Path,
+    state: &AppState,
+    wave: &WaveState,
+    library: &Arc<Library>,
+) -> PlayerState {
     let journal = Arc::new(Journal::open(&data.join("player-journal.jsonl")));
     let handle = match volna_player::init_gstreamer() {
         Ok(()) => {
@@ -50,6 +57,7 @@ pub fn setup(data: &Path, config: &Path, state: &AppState, wave: &WaveState) -> 
                 wave: wave.engine(),
                 ytm: wave.ytm().clone(),
                 journal: journal.clone(),
+                library: library.clone(),
             };
             let paths = volna_player::persist::Paths {
                 queue: data.join("player-queue.json"),

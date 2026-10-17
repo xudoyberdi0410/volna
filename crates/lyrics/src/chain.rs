@@ -9,9 +9,13 @@
 //! Every provider runs under its own timeout; an error is logged and the
 //! chain goes on.
 
-use std::time::Instant;
+use std::collections::HashMap;
+use std::future::Future;
+use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
 use futures_util::future::join_all;
+use futures_util::stream::FuturesUnordered;
 use reqwest::Client;
 use volna_ytm::YtmClient;
 
@@ -61,6 +65,106 @@ impl Acc {
             failed: self.failed,
         }
     }
+}
+
+/// How long [`Fetcher::first`] waits for the providers the sequential chain
+/// would consult before settling for whatever it already has.
+pub const SOFT_DEADLINE: Duration = Duration::from_secs(4);
+
+/// Provider results so far: `None` = failed.
+type Done = HashMap<Provider, Option<Vec<Lyrics>>>;
+
+/// Replays the sequential chain over the results in `done`. `None` while a
+/// provider it needs is still running.
+fn decide(q: &TrackQuery, with_ytm: bool, done: &Done) -> Option<Fetched> {
+    let mut acc = Acc::default();
+    let need = |acc: &mut Acc, p: Provider| -> Option<()> {
+        acc.add(done.get(&p)?.clone());
+        Some(())
+    };
+    need(&mut acc, Provider::LrcRed)?;
+    if !acc.got.is_empty() {
+        return Some(acc.done());
+    }
+    let word = |c: &[Lyrics]| c.iter().any(|l| l.synced == Synced::Word);
+    let timed = |c: &[Lyrics]| c.iter().any(|l| l.synced != Synced::None);
+    if q.has_title_artist() {
+        need(&mut acc, Provider::Bini)?;
+        for p in [Provider::Unison, Provider::LyricsPlus] {
+            if !word(&acc.got) {
+                need(&mut acc, p)?;
+            }
+        }
+        if !timed(&acc.got) {
+            need(&mut acc, Provider::Lrclib)?;
+        }
+        if acc.got.is_empty() {
+            need(&mut acc, Provider::Genius)?;
+        }
+    }
+    if acc.got.is_empty() && with_ytm {
+        need(&mut acc, Provider::Ytm)?;
+    }
+    Some(acc.done())
+}
+
+/// Everything in `done` that found something, for the soft deadline.
+fn found_so_far(done: &Done) -> Option<Fetched> {
+    let mut acc = Acc::default();
+    for r in done.values() {
+        acc.add(r.clone());
+    }
+    (!acc.got.is_empty()).then(|| acc.done())
+}
+
+/// [`Fetcher::first`] over any provider runner (tests pass fakes).
+async fn first_with<F, Fut>(
+    q: &TrackQuery,
+    with_ytm: bool,
+    soft: Duration,
+    run: F,
+) -> Fetched
+where
+    F: Fn(Provider) -> Fut,
+    Fut: Future<Output = Option<Vec<Lyrics>>>,
+{
+    let wanted = Provider::ALL.into_iter().filter(|&p| match p {
+        Provider::LrcRed => true,
+        Provider::Ytm => with_ytm,
+        _ => q.has_title_artist(),
+    });
+    let mut running: FuturesUnordered<_> = wanted
+        .map(|p| {
+            let f = run(p);
+            async move { (p, f.await) }
+        })
+        .collect();
+    let mut done = Done::new();
+    let deadline = tokio::time::sleep(soft);
+    tokio::pin!(deadline);
+    let mut late = false;
+    loop {
+        tokio::select! {
+            next = running.next() => {
+                let Some((p, r)) = next else { break };
+                done.insert(p, r);
+                if let Some(f) = decide(q, with_ytm, &done) {
+                    return f;
+                }
+                if late && let Some(f) = found_so_far(&done) {
+                    return f;
+                }
+            }
+            () = &mut deadline, if !late => {
+                late = true;
+                if let Some(f) = found_so_far(&done) {
+                    tracing::debug!(have = done.len(), "lyrics: soft deadline, settling");
+                    return f;
+                }
+            }
+        }
+    }
+    decide(q, with_ytm, &done).unwrap_or_default()
 }
 
 #[derive(Clone)]
@@ -120,36 +224,12 @@ impl Fetcher {
         }
     }
 
-    /// The chain as the old UI ran it: stops as soon as it has something
-    /// good enough.
+    /// The chain as the old UI ran it (see the module doc), but with every
+    /// provider it may need asked at once: the answer is the one the
+    /// sequential chain would give, as soon as the providers it depends on
+    /// are in. After [`SOFT_DEADLINE`], anything found is good enough.
     pub async fn first(&self, http: &Client, q: &TrackQuery) -> Fetched {
-        let mut acc = Acc::default();
-        acc.add(self.run(http, q, Provider::LrcRed).await);
-        if !acc.got.is_empty() {
-            return acc.done();
-        }
-
-        let word = |c: &[Lyrics]| c.iter().any(|l| l.synced == Synced::Word);
-        let timed = |c: &[Lyrics]| c.iter().any(|l| l.synced != Synced::None);
-
-        if q.has_title_artist() {
-            acc.add(self.run(http, q, Provider::Bini).await);
-            for p in [Provider::Unison, Provider::LyricsPlus] {
-                if !word(&acc.got) {
-                    acc.add(self.run(http, q, p).await);
-                }
-            }
-            if !timed(&acc.got) {
-                acc.add(self.run(http, q, Provider::Lrclib).await);
-            }
-            if acc.got.is_empty() {
-                acc.add(self.run(http, q, Provider::Genius).await);
-            }
-        }
-        if acc.got.is_empty() && self.ytm.is_some() {
-            acc.add(self.run(http, q, Provider::Ytm).await);
-        }
-        acc.done()
+        first_with(q, self.ytm.is_some(), SOFT_DEADLINE, |p| self.run(http, q, p)).await
     }
 
     /// Every provider at once, for the source switcher.
@@ -160,5 +240,96 @@ impl Fetcher {
             acc.add(r);
         }
         acc.done()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Line;
+
+    fn q() -> TrackQuery {
+        TrackQuery {
+            title: "Song".into(),
+            artist: "Artist".into(),
+            ..Default::default()
+        }
+    }
+
+    fn line(source: &str) -> Lyrics {
+        let mut l = Line::plain("la");
+        l.start_ms = 1000;
+        l.end_ms = 2000;
+        Lyrics::new(source, vec![l])
+    }
+
+    /// A fake provider: answers after `secs` (virtual time).
+    async fn after(secs: u64, r: Option<Vec<Lyrics>>) -> Option<Vec<Lyrics>> {
+        tokio::time::sleep(Duration::from_secs(secs)).await;
+        r
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn providers_run_at_once_not_one_after_another() {
+        // Sequentially this is 10 s (every provider takes 10 s); in parallel
+        // the answer comes when the slowest needed one is in.
+        let t0 = tokio::time::Instant::now();
+        let got = first_with(&q(), true, Duration::from_secs(60), |p| {
+            after(
+                10,
+                Some(if p == Provider::Lrclib {
+                    vec![line("LRCLIB")]
+                } else {
+                    vec![]
+                }),
+            )
+        })
+        .await;
+        assert_eq!(got.sources[0].source, "LRCLIB");
+        assert_eq!(t0.elapsed(), Duration::from_secs(10));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lrc_red_hit_does_not_wait_for_the_rest() {
+        let t0 = tokio::time::Instant::now();
+        let got = first_with(&q(), true, Duration::from_secs(60), |p| match p {
+            Provider::LrcRed => after(1, Some(vec![line("lrc.red")])),
+            _ => after(30, None),
+        })
+        .await;
+        assert_eq!(got.sources.len(), 1);
+        assert_eq!(got.sources[0].source, "lrc.red");
+        assert_eq!(t0.elapsed(), Duration::from_secs(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hanging_provider_does_not_hold_up_a_found_text() {
+        // lyricsplus hangs; LRCLIB answered fast. The chain would wait for
+        // lyricsplus (nothing word-synced yet); the soft deadline cuts it.
+        let t0 = tokio::time::Instant::now();
+        let got = first_with(&q(), true, Duration::from_secs(4), |p| match p {
+            Provider::LyricsPlus => after(25, None),
+            Provider::Lrclib => after(1, Some(vec![line("LRCLIB")])),
+            _ => after(1, Some(vec![])),
+        })
+        .await;
+        assert_eq!(got.sources[0].source, "LRCLIB");
+        assert_eq!(t0.elapsed(), Duration::from_secs(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn nothing_found_waits_for_every_needed_provider() {
+        let got = first_with(&q(), true, Duration::from_secs(4), |p| match p {
+            Provider::Ytm => after(6, Some(vec![Lyrics::from_plain("YouTube Music", "x", None)])),
+            _ => after(2, Some(vec![])),
+        })
+        .await;
+        assert_eq!(got.sources[0].source, "YouTube Music");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn all_failed_is_reported() {
+        let got = first_with(&q(), true, Duration::from_secs(4), |_| after(1, None)).await;
+        assert!(got.all_failed());
     }
 }

@@ -1,56 +1,50 @@
-/// UI-only appearance prefs, stored by Flutter (`shared_preferences`), not
-/// in the daemon settings (`docs/flutter-ui-plan.md` 3d).
-///
-/// - [themeModeProvider]: system / light / dark.
-/// - [coverColorsProvider]: tint the app with the current cover's colours.
-library;
-
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _themeKey = 'volna.themeMode';
-const _coverColorsKey = 'volna.coverColors';
+/// Dark / light / system. A UI-only preference, so it lives in
+/// shared_preferences (key `theme_mode`), not in the daemon.
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  static const key = 'theme_mode';
 
-final themeModeProvider =
-    NotifierProvider<ThemeModeController, ThemeMode>(ThemeModeController.new);
-
-class ThemeModeController extends Notifier<ThemeMode> {
   @override
   ThemeMode build() {
-    unawaited(_load());
+    _load();
     return ThemeMode.system;
   }
 
   Future<void> _load() async {
     try {
-      final p = await SharedPreferences.getInstance();
-      final v = p.getString(_themeKey);
-      final mode = ThemeMode.values.where((m) => m.name == v).firstOrNull;
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(key);
+      final mode = ThemeMode.values.where((m) => m.name == saved).firstOrNull;
       if (mode != null && ref.mounted) state = mode;
     } catch (_) {
-      // No prefs backend (tests without mocks): keep the default.
+      // No storage (tests, a broken prefs file): keep the system theme.
     }
   }
 
   Future<void> set(ThemeMode mode) async {
     state = mode;
     try {
-      final p = await SharedPreferences.getInstance();
-      await p.setString(_themeKey, mode.name);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, mode.name);
     } catch (_) {}
   }
 }
 
+final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+
+const _coverColorsKey = 'volna.coverColors';
+
+/// Tint the app with the current cover's colours (default on).
 final coverColorsProvider =
     NotifierProvider<CoverColorsController, bool>(CoverColorsController.new);
 
 class CoverColorsController extends Notifier<bool> {
   @override
   bool build() {
-    unawaited(_load());
+    _load();
     return true;
   }
 

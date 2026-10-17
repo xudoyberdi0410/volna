@@ -119,7 +119,7 @@ Future<GoRouter> pumpApp(
   Size size = const Size(1440, 900),
   ThemeMode theme = ThemeMode.dark,
 }) async {
-  SharedPreferences.setMockInitialValues({'volna.themeMode': theme.name});
+  SharedPreferences.setMockInitialValues({ThemeModeNotifier.key: theme.name});
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -139,7 +139,7 @@ Future<GoRouter> pumpApp(
   return router;
 }
 
-class _FixedTheme extends ThemeModeController {
+class _FixedTheme extends ThemeModeNotifier {
   final ThemeMode mode;
   _FixedTheme(this.mode);
   @override

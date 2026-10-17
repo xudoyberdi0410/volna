@@ -25,9 +25,9 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 
 use crate::error::StreamError;
+use crate::model::{Quality, VideoId};
 use crate::resolver::Backend;
 use crate::stream::{Network, StreamRequest, StreamService};
-use crate::ytdlp::{Quality, VideoId};
 
 type Body = UnsyncBoxBody<Bytes, std::io::Error>;
 
@@ -56,7 +56,7 @@ impl LoopbackServer {
         self.addr
     }
 
-    /// `http://127.0.0.1:<port>/<token>/stream`; append `/<videoId>[?q=low]`.
+    /// `http://127.0.0.1:<port>/<token>/stream`; append `/<videoId>[?q=low][&codec=aac]`.
     pub fn stream_base(&self) -> String {
         format!("http://{}/{}/stream", self.addr, self.token)
     }
@@ -113,13 +113,13 @@ async fn handle<B: Backend, N: Network>(
         Ok(id) => id,
         Err(e) => return stream_error(&e),
     };
-    let quality = Quality::from_param(
+    let param = |name: &str| {
         req.uri()
             .query()
-            .and_then(|q| url::form_urlencoded::parse(q.as_bytes()).find(|(k, _)| k == "q"))
+            .and_then(|q| url::form_urlencoded::parse(q.as_bytes()).find(|(k, _)| k == name))
             .map(|(_, v)| v.into_owned())
-            .as_deref(),
-    );
+    };
+    let quality = Quality::from_params(param("q").as_deref(), param("codec").as_deref());
     let request = StreamRequest {
         id,
         quality,

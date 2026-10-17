@@ -4,12 +4,15 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::error::{Result, StreamError};
+use crate::model::{
+    Codec, Delivery, Quality, ResolvedStream, Tier, VideoId, url_expiry, url_param,
+};
 
 const TARGET_TRIPLE: &str = env!("VOLNA_STREAMS_TARGET");
 
@@ -17,66 +20,15 @@ const TARGET_TRIPLE: &str = env!("VOLNA_STREAMS_TARGET");
 pub const DEFAULT_RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
 /// `yt-dlp -U` downloads a ~20 MB binary.
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(300);
-/// Assumed lifetime of a URL that carries no `expire` parameter.
-const FALLBACK_URL_LIFETIME: Duration = Duration::from_secs(3600);
 
-/// A YouTube video id: 11 characters of `[A-Za-z0-9_-]`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VideoId(String);
-
-impl VideoId {
-    pub fn parse(raw: &str) -> Result<Self> {
-        let ok = raw.len() == 11
-            && raw
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        if ok {
-            Ok(Self(raw.to_owned()))
-        } else {
-            Err(StreamError::InvalidVideoId(raw.to_owned()))
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn watch_url(&self) -> String {
-        format!("https://music.youtube.com/watch?v={}", self.0)
-    }
-}
-
-impl std::fmt::Display for VideoId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// Audio quality tier. `Low` saves bandwidth on slow proxies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Quality {
-    #[default]
-    High,
-    Low,
-}
-
-impl Quality {
-    /// Parses the `q` query parameter of `volna://stream/` (`low` or anything else).
-    pub fn from_param(value: Option<&str>) -> Self {
-        match value {
-            Some(v) if v.eq_ignore_ascii_case("low") => Self::Low,
-            _ => Self::High,
-        }
-    }
-
-    /// yt-dlp `-f` selector. Opus first: it is what YouTube serves best and
-    /// WebKit/WebView2 both play WebM/Opus; m4a/AAC is the fallback.
-    pub fn format_selector(self) -> &'static str {
-        match self {
-            Self::High => "bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio",
-            Self::Low => "worstaudio[acodec=opus]/worstaudio[ext=m4a]/worstaudio",
-        }
+/// yt-dlp `-f` selector. Opus first: it is what YouTube serves best and
+/// WebKit/WebView2 both play WebM/Opus; m4a/AAC is the fallback.
+pub fn format_selector(quality: Quality) -> &'static str {
+    match (quality.tier, quality.codec) {
+        (Tier::High, Codec::PreferOpus) => "bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio",
+        (Tier::Low, Codec::PreferOpus) => "worstaudio[acodec=opus]/worstaudio[ext=m4a]/worstaudio",
+        (Tier::High, Codec::AacOnly) => "bestaudio[ext=m4a]",
+        (Tier::Low, Codec::AacOnly) => "worstaudio[ext=m4a]",
     }
 }
 
@@ -238,24 +190,6 @@ impl Cookies {
     }
 }
 
-/// A playable googlevideo URL plus what we know about it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ResolvedStream {
-    pub url: String,
-    pub format_id: String,
-    /// `audio/webm` or `audio/mp4`.
-    pub mime: String,
-    /// `opus`, `mp4a.40.2`, ...
-    pub codec: Option<String>,
-    pub bitrate_kbps: Option<f64>,
-    /// Exact byte length when yt-dlp knows it (or the URL carries `clen`).
-    pub filesize: Option<u64>,
-    /// When googlevideo stops accepting the URL (`expire` URL parameter).
-    pub expires_at: SystemTime,
-    /// User-Agent yt-dlp resolved with; googlevideo may check it.
-    pub user_agent: Option<String>,
-}
-
 /// The subset of `yt-dlp -J` output we use.
 #[derive(Debug, Deserialize)]
 struct YtDlpInfo {
@@ -278,17 +212,8 @@ pub fn parse_info(json: &[u8], now: SystemTime) -> Result<ResolvedStream> {
         .url
         .ok_or_else(|| StreamError::BadYtDlpOutput("no url (no single format selected?)".into()))?;
     let parsed = url::Url::parse(&url).map_err(|e| StreamError::BadYtDlpOutput(e.to_string()))?;
-    let param = |name: &str| {
-        parsed
-            .query_pairs()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.into_owned())
-    };
-
-    let expires_at = param("expire")
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|secs| UNIX_EPOCH + Duration::from_secs(secs))
-        .unwrap_or(now + FALLBACK_URL_LIFETIME);
+    let param = |name: &str| url_param(&parsed, name);
+    let expires_at = url_expiry(&parsed, now);
     let filesize = info
         .filesize
         .or_else(|| param("clen").and_then(|v| v.parse().ok()));
@@ -304,6 +229,7 @@ pub fn parse_info(json: &[u8], now: SystemTime) -> Result<ResolvedStream> {
 
     Ok(ResolvedStream {
         url,
+        delivery: Delivery::Url,
         format_id: info.format_id.unwrap_or_default(),
         mime,
         codec,
@@ -462,7 +388,7 @@ impl YtDlp {
             "--no-progress",
             "-J",
             "-f",
-            quality.format_selector(),
+            format_selector(quality),
         ]
         .map(String::from)
         .into();
@@ -672,6 +598,8 @@ fn find_in(exe_dir: Option<&Path>, path_var: Option<&OsStr>) -> Option<(PathBuf,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::FALLBACK_URL_LIFETIME;
+    use std::time::UNIX_EPOCH;
 
     const SAMPLE: &str = r#"{
         "id": "dQw4w9WgXcQ",
@@ -685,15 +613,6 @@ mod tests {
         "url": "https://rr2---sn-x.googlevideo.com/videoplayback?expire=1792193595&itag=251&mime=audio%2Fwebm&clen=3433755&ip=203.0.113.9",
         "http_headers": {"User-Agent": "Mozilla/5.0 test", "Accept": "*/*"}
     }"#;
-
-    #[test]
-    fn video_id_validation() {
-        assert!(VideoId::parse("dQw4w9WgXcQ").is_ok());
-        assert!(VideoId::parse("a-b_c-d_e-f").is_ok());
-        for bad in ["", "short", "dQw4w9WgXcQx", "dQw4w9WgX/Q", "../../etc/p"] {
-            assert!(VideoId::parse(bad).is_err(), "{bad:?}");
-        }
-    }
 
     #[test]
     fn parses_selected_format() {
@@ -735,7 +654,7 @@ mod tests {
             "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
         );
         let f = direct.iter().position(|a| a == "-f").unwrap();
-        assert_eq!(direct[f + 1], Quality::High.format_selector());
+        assert_eq!(direct[f + 1], format_selector(Quality::High));
 
         let proxied = YtDlp::resolve_args(
             &id,
@@ -746,7 +665,7 @@ mod tests {
         );
         let p = proxied.iter().position(|a| a == "--proxy").unwrap();
         assert_eq!(proxied[p + 1], "socks5h://u:p@127.0.0.1:1");
-        assert!(proxied.contains(&Quality::Low.format_selector().to_owned()));
+        assert!(proxied.contains(&format_selector(Quality::Low).to_owned()));
         assert!(!proxied.iter().any(|a| a.starts_with("--cookies")));
 
         let browser = YtDlp::resolve_args(
@@ -837,14 +756,6 @@ mod tests {
         let e = classify_failure("ERROR: [youtube] abc: Requested format is not available");
         assert!(matches!(e, StreamError::Unavailable(_)));
         assert!(matches!(classify_failure(""), StreamError::YtDlpFailed(m) if m == "no output"));
-    }
-
-    #[test]
-    fn quality_param() {
-        assert_eq!(Quality::from_param(Some("low")), Quality::Low);
-        assert_eq!(Quality::from_param(Some("LOW")), Quality::Low);
-        assert_eq!(Quality::from_param(Some("hi")), Quality::High);
-        assert_eq!(Quality::from_param(None), Quality::High);
     }
 
     #[test]

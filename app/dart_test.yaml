@@ -1,3 +1,3 @@
 tags:
+  # Screenshot tests (test/goldens/*.png).
   golden:
-    description: Screenshot tests of the main screens (test/goldens/).

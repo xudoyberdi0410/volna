@@ -107,6 +107,7 @@ impl Backend for FakeBackend {
                 "{}/videoplayback?id={id}&n={n}&mid={}",
                 self.base, self.expire_mid as u8
             ),
+            delivery: volna_streams::Delivery::Url,
             format_id: "251".into(),
             mime: "audio/webm".into(),
             codec: Some("opus".into()),

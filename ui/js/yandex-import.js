@@ -8,7 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { db } from './db.js';
 import { showNotification } from './notifications.js';
-import { findBestMatch, stringSimilarity } from './playlist-importer.js';
+import { findBestMatch, stringSimilarity, toLatin } from './playlist-importer.js';
 
 const PARALLEL = 4;
 // Candidates further off than this in length are another recording.
@@ -68,22 +68,75 @@ function progressBox() {
     };
 }
 
-async function matchTrack(api, t) {
+// Stricter than the CSV import: Yandex gives exact titles, and a loose match
+// puts a stranger's song into the likes.
+const MATCH = { strictArtistMatch: true, minTitleScore: 0.7, minArtistScore: 0.7 };
+// "(Official Music Video)", "[HD]", "| Music video" and the like.
+const VIDEO_NOISE =
+    /\s*[([](?:official|music video|audio|lyrics?|mood video|hd|mv|клип|премьера)[^)\]]*[)\]]|\s+\|.*$/gi;
+
+// A video as the song it carries. Uploads by other channels put the song into
+// the title ("DVN - Можно я с тобой"), sometimes the other way round, so both
+// readings are offered; each candidate points back at the video.
+function videoCandidates(video) {
+    const title = video.title.replace(VIDEO_NOISE, '').trim();
+    const out = [{ ...video, title, source: video }];
+    const parts = title.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+    if (parts) {
+        const [, left, right] = parts;
+        out.push({ ...video, title: right, artists: [{ name: left }, ...(video.artists ?? [])], source: video });
+        out.push({ ...video, title: left, artists: [{ name: right }, ...(video.artists ?? [])], source: video });
+    }
+    return out;
+}
+
+// Yandex sometimes has a Japanese release title («フェイデッド» for "Faded"),
+// which no spelling rule maps back. For such titles the same artist and a
+// near-identical length are taken as the song.
+const NO_LATIN_OR_CYRILLIC = /^[^\p{Script=Latin}\p{Script=Cyrillic}]+$/u;
+const EXACT_LENGTH_S = 2;
+
+function sameArtistAndLength(items, t) {
+    if (!t.durationMs || !NO_LATIN_OR_CYRILLIC.test(t.title)) return null;
+    return (
+        items.find(
+            (item) =>
+                item.duration &&
+                Math.abs(item.duration - t.durationMs / 1000) <= EXACT_LENGTH_S &&
+                (item.artists ?? []).some((a) => t.artists.some((name) => stringSimilarity(a.name, name) >= 0.9))
+        ) ?? null
+    );
+}
+
+export async function matchTrack(api, t) {
     const artist = t.artists.join(', ');
     const durationOk = (item) =>
         !t.durationMs || !item.duration || Math.abs(item.duration - t.durationMs / 1000) <= DURATION_SLACK_S;
-    const attempt = async (title) => {
-        const result = await api.searchTracks(`${t.artists[0] ?? ''} ${title}`.trim());
-        const items = result?.items ?? [];
-        const close = items.filter(durationOk);
-        return (
-            findBestMatch(close, artist, t.album, { strictArtistMatch: true }, title) ||
-            findBestMatch(items, artist, t.album, { strictArtistMatch: true }, title)
-        );
-    };
-    let found = await attempt(fullTitle(t));
-    if (!found && t.version) found = await attempt(t.title);
-    return found;
+    const plain = `${t.artists[0] ?? ''} ${t.title}`.trim();
+    // YouTube Music may only know the release under its Latin spelling.
+    const queries = toLatin(plain) === plain ? [plain] : [plain, toLatin(plain)];
+    const titles = t.version ? [fullTitle(t), t.title] : [t.title];
+
+    for (const query of t.version ? [`${t.artists[0] ?? ''} ${fullTitle(t)}`.trim(), ...queries] : queries) {
+        const items = ((await api.searchTracks(query))?.items ?? []).filter(durationOk);
+        for (const title of titles) {
+            const found = findBestMatch(items, artist, t.album, MATCH, title);
+            if (found) return found;
+        }
+        const byLength = sameArtistAndLength(items, t);
+        if (byLength) return byLength;
+    }
+    // Songs that exist on YouTube only as videos. Uploads differ in length
+    // (intros, compilations), so only close lengths count here.
+    for (const query of queries) {
+        const videos = (await api.searchTracks(query, { videos: true }))?.items ?? [];
+        const candidates = videos.filter(durationOk).flatMap(videoCandidates);
+        for (const title of titles) {
+            const found = findBestMatch(candidates, artist, null, MATCH, title);
+            if (found) return found.source;
+        }
+    }
+    return null;
 }
 
 // Runs `fn` over `items` with a few requests in flight; `null` where it threw.
@@ -114,7 +167,19 @@ async function savePlaylists(playlists, matched) {
         if (tracks.length === 0) continue;
         const same = existing.find((e) => e.name === p.title);
         if (same) {
+            // Tracks found this time go where Yandex has them, not at the end;
+            // tracks added by hand in Volna stay after the imported ones.
             await db.addTracksToPlaylist(same.id, tracks);
+            const order = new Map(tracks.map((t, i) => [t.id, i]).reverse());
+            const current = (await db.getPlaylist(same.id))?.tracks ?? [];
+            const rank = (t) => order.get(t.id) ?? tracks.length;
+            await db.updatePlaylistTracks(
+                same.id,
+                current
+                    .map((t, i) => ({ t, i }))
+                    .sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i)
+                    .map(({ t }) => t)
+            );
             continue;
         }
         const playlist = await db.createPlaylist(p.title, tracks, '', p.description || '');

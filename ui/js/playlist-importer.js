@@ -10,15 +10,76 @@ function isIsrcMatch(trackIsrc, targetIsrc) {
     return a.length > 0 && a === b;
 }
 
+// Cyrillic (Russian and Uzbek) to Latin. YouTube Music often lists Russian and
+// Uzbek releases transliterated: «Вотсап» is "Votsap", «Ахрор» is "Axror".
+const CYRILLIC_TO_LATIN = {
+    а: 'a',
+    б: 'b',
+    в: 'v',
+    г: 'g',
+    д: 'd',
+    е: 'e',
+    ё: 'e',
+    ж: 'zh',
+    з: 'z',
+    и: 'i',
+    й: 'j',
+    к: 'k',
+    л: 'l',
+    м: 'm',
+    н: 'n',
+    о: 'o',
+    п: 'p',
+    р: 'r',
+    с: 's',
+    т: 't',
+    у: 'u',
+    ф: 'f',
+    х: 'h',
+    ц: 'ts',
+    ч: 'ch',
+    ш: 'sh',
+    щ: 'sh',
+    ъ: '',
+    ы: 'y',
+    ь: '',
+    э: 'e',
+    ю: 'ju',
+    я: 'ja',
+    ў: 'o',
+    қ: 'q',
+    ғ: 'g',
+    ҳ: 'h',
+    і: 'i',
+    ї: 'ji',
+    є: 'je',
+};
+
+export function toLatin(str) {
+    return String(str || '').replace(/[\u0400-\u04ff]/g, (ch) => {
+        const lower = ch.toLowerCase();
+        const latin = CYRILLIC_TO_LATIN[lower] ?? ch;
+        return ch === lower ? latin : latin.charAt(0).toUpperCase() + latin.slice(1);
+    });
+}
+
+// One spelling for the usual transliteration variants (kh/x/h, y/j, zh/j,
+// diacritics), so «Алихонов», "Alixonov" and "Alikhonov" compare equal.
+function foldForMatch(str) {
+    return toLatin(String(str || '').toLowerCase())
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+        .replace(/shch|sch/g, 'sh')
+        .replace(/kh|x/g, 'h')
+        .replace(/zh|y/g, 'j');
+}
+
 function normalizeForMatch(str) {
-    return String(str || '')
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]+/gu, '');
+    return foldForMatch(str).replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
 function tokenize(str) {
-    return String(str || '')
-        .toLowerCase()
+    return foldForMatch(str)
         .replace(/[^\p{L}\p{N}]/gu, ' ')
         .trim()
         .split(/\s+/)
@@ -38,7 +99,22 @@ export function stringSimilarity(a, b) {
     const sb = new Set(tb);
     let common = 0;
     for (const t of sa) if (sb.has(t)) common++;
-    return common / Math.max(sa.size, sb.size);
+    return Math.max(common / Math.max(sa.size, sb.size), editSimilarity(na, nb));
+}
+
+// 1 - Levenshtein distance / length, for spellings a letter or two apart
+// ("berezka" and «берёзка»). Short strings differ too easily to count.
+function editSimilarity(a, b) {
+    if (Math.min(a.length, b.length) < 6 || Math.max(a.length, b.length) > 80) return 0;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        prev = cur;
+    }
+    return 1 - prev[b.length] / Math.max(a.length, b.length);
 }
 
 function splitArtists(str) {
@@ -91,8 +167,9 @@ export function findBestMatch(items, targetArtist, targetAlbum, importOptions, t
     let bestScore = -1;
     for (const item of items) {
         const { score, titleScore, artistScore } = scoreTrack(item, targetTitle, targetArtist, targetAlbum);
-        if (titleScore < 0.5) continue;
-        if (importOptions?.strictArtistMatch && targetArtist && artistScore < 0.5) continue;
+        if (titleScore < (importOptions?.minTitleScore ?? 0.5)) continue;
+        if (importOptions?.strictArtistMatch && targetArtist && artistScore < (importOptions?.minArtistScore ?? 0.5))
+            continue;
         if (score > bestScore) {
             bestScore = score;
             best = item;

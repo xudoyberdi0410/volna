@@ -28,6 +28,7 @@ import {
     crossfadeSettings,
     gaplessPlaybackSettings,
     contentBlockingSettings,
+    queueManager,
 } from './storage.js';
 import { db } from './db.js';
 import { SVG_CLOCK, SVG_PLAY, SVG_PAUSE } from './icons.js';
@@ -36,7 +37,14 @@ import { createBridge, parseError, PLAYER_EVENTS, SKIP } from './player-bridge.j
 import { PlayerMirror, isPlayableTrack, toTrackInput } from './player-mirror.js';
 import { RemoteMediaElement } from './remote-media.js';
 import { audioContextManager } from './audio-context.js';
-import { buildSettingsPatch, clampSpeed, modeToRepeat, repeatToMode } from './player-settings.js';
+import {
+    buildQueueMigration,
+    buildSettingsPatch,
+    clampSpeed,
+    modeToRepeat,
+    repeatToMode,
+    storedVolume,
+} from './player-settings.js';
 
 const SETTINGS_SOURCES = {
     replayGainSettings,
@@ -101,6 +109,8 @@ export class Player {
     constructor(api, quality = 'HIGH', { bridge = null } = {}) {
         this.api = api;
         this.quality = normalizeQualityToken(quality) || quality;
+        // Read before anything mirrors the native volume into localStorage (§5.8).
+        this._legacyVolume = storedVolume();
         this.bridge = bridge;
         this.mirror = new PlayerMirror({ prepare: (raw) => this.api.getAPI().prepareTrack(raw) });
         this.media = new RemoteMediaElement(this);
@@ -159,6 +169,7 @@ export class Player {
         await this._attach();
         // EQ, mono and binaural edits in settings go to Rust as DspConfig.
         audioContextManager.setDspSink((config) => this.setDsp(config));
+        if (this.settings && this.settings.migrated === false) await this._migrate();
 
         window.addEventListener('content-blocking-changed', () => this.pushSettings({ blocklist: true }));
         if (import.meta.env?.DEV) window.volnaPlayer = this;
@@ -300,7 +311,7 @@ export class Player {
             }
         }
         const uidChanged = force || prev.uid !== this.state.uid;
-        if (uidChanged) this._renderCurrent();
+        this._renderCurrent();
         this.media.applyState({ ...this.state, volume: this._volume, muted: this._muted });
         if (force || (prev.status === 'loading') !== (this.state.status === 'loading')) {
             this.setLoadingState(this.state.status === 'loading');
@@ -312,10 +323,11 @@ export class Player {
     }
 
     _renderCurrent() {
-        const uid = this.state.uid;
-        if (uid === this._renderedUid) return;
-        this._renderedUid = uid;
-        this.renderNowPlaying(this.currentTrack);
+        const track = this.currentTrack;
+        const key = track?._uid ?? null;
+        if (key === this._renderedUid) return;
+        this._renderedUid = key;
+        this.renderNowPlaying(track);
     }
 
     _onPosition(p) {
@@ -360,8 +372,8 @@ export class Player {
             this.showRadioLoading(fetching);
         }
 
-        // A track entry can change (e.g. marked unavailable) without a uid change.
-        if (this.state.uid && this._renderedUid !== this.state.uid) this._renderCurrent();
+        // With nothing loaded the bar shows the current queue entry (as after a restart).
+        this._renderCurrent();
         if (window.renderQueueFunction) void Promise.resolve(window.renderQueueFunction()).catch(warn('queue render'));
     }
 
@@ -416,6 +428,44 @@ export class Player {
         if (this.waveActive === active) return;
         this.waveActive = active;
         this._emit('wave', { active });
+    }
+
+    /**
+     * First start with the native player (§5.8): hand it the settings, the
+     * EQ and the queue the old `<audio>` player kept in localStorage.
+     * `migrated: true` goes last, so an interrupted import runs again.
+     */
+    async _migrate() {
+        try {
+            await this.bridge.call('player_set_dsp', { config: audioContextManager.buildDspConfig() });
+            if (!this.mirror.length) {
+                const m = buildQueueMigration(queueManager.getQueue(), isPlayableTrack);
+                if (m) {
+                    await this.bridge.call('player_set_queue', {
+                        tracks: m.tracks.map((t) => toTrackInput(t)),
+                        startIndex: m.startIndex,
+                        play: false,
+                    });
+                    if (m.shuffle) await this.bridge.call('player_set_shuffle', { on: true });
+                    if (m.repeat !== 'off') await this.bridge.call('player_set_repeat', { mode: m.repeat });
+                }
+            }
+            try {
+                localStorage.removeItem(queueManager.STORAGE_KEY);
+            } catch {
+                /* storage unavailable */
+            }
+            const patch = {
+                ...buildSettingsPatch(SETTINGS_SOURCES, { quality: this.quality }),
+                ...this._legacyVolume,
+                migrated: true,
+            };
+            const settings = await this.bridge.call('player_set_settings', { patch });
+            if (settings) this.settings = settings;
+            console.info('[player] imported the old player state');
+        } catch (e) {
+            console.error('[player] migration failed', e);
+        }
     }
 
     // ---- commands -------------------------------------------------------------
@@ -497,8 +547,10 @@ export class Player {
         return this.media;
     }
 
+    /** The loaded entry, or the current queue entry while nothing is loaded. */
     get currentTrack() {
-        return this.mirror.track(this.state.uid);
+        if (this.state.uid) return this.mirror.track(this.state.uid) ?? this.mirror.currentTrack;
+        return this.mirror.currentTrack;
     }
 
     get isLoadingTrack() {
@@ -1111,7 +1163,7 @@ export class Player {
 
     updatePlayingTrackIndicator() {
         const current = this.currentTrack;
-        const index = this.mirror.indexOf(this.state.uid);
+        const index = current ? this.mirror.indexOf(current._uid) : -1;
         document.querySelectorAll('.track-item').forEach((item) => {
             item.classList.toggle('playing', !!current && item.dataset.trackId == current.id);
         });

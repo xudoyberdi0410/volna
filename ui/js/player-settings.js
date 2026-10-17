@@ -80,3 +80,24 @@ export function storedVolume() {
         muted: localStorageGet('muted') === 'true',
     };
 }
+
+/**
+ * The one-time import of the old localStorage queue (`monochrome-queue`,
+ * docs/native-player.md §5.8). `queue` is the pre-shuffle order in that
+ * format; the current track is looked up in the order that was playing.
+ * Returns null when there is nothing playable to import.
+ */
+export function buildQueueMigration(saved, isPlayable) {
+    if (!saved || !Array.isArray(saved.queue)) return null;
+    const playing = saved.shuffleActive && Array.isArray(saved.shuffledQueue) ? saved.shuffledQueue : saved.queue;
+    const current = playing[saved.currentQueueIndex ?? -1] ?? null;
+    const tracks = saved.queue.filter((t) => t && isPlayable(t));
+    if (!tracks.length) return null;
+    const at = current ? tracks.findIndex((t) => String(t.id) === String(current.id)) : -1;
+    return {
+        tracks,
+        startIndex: Math.max(0, at),
+        shuffle: !!saved.shuffleActive,
+        repeat: modeToRepeat(saved.repeatMode ?? 0),
+    };
+}

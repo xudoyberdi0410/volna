@@ -1,5 +1,5 @@
 /// An in-memory daemon library on a [FakeTransport]: the library commands
-/// of `crates/daemon/src/api/library.rs` with the same shapes, emitting
+/// of `crates/core/src/api/library.rs` with the same shapes, emitting
 /// `library_changed` like the daemon.
 library;
 

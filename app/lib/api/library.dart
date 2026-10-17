@@ -1,5 +1,5 @@
 /// Typed wrappers over the daemon's library commands
-/// (`crates/daemon/src/api/library.rs`, rows in `api/library/store.rs`):
+/// (`crates/core/src/api/library.rs`, rows in `api/library/store.rs`):
 /// likes, user playlists, history, pins and the legacy import status.
 ///
 /// Every write makes the daemon send `library_changed{kind}` ([LibraryApi.changes]);

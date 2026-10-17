@@ -7,9 +7,9 @@
 //! `api_emu` still lives in `src-tauri/src/api_emu` (it has uncommitted
 //! edits there) and is compiled into this crate from that path.
 
+pub mod api;
 #[path = "../../../src-tauri/src/api_emu/mod.rs"]
 pub mod api_emu;
-pub mod api;
 pub mod commands;
 pub mod daemon;
 pub mod dispatch;

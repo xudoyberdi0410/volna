@@ -20,6 +20,8 @@ fn main() {
         let status = std::process::Command::new(exe).status();
         std::process::exit(status.ok().and_then(|s| s.code()).unwrap_or(1));
     }
+    #[cfg(windows)]
+    use_bundled_gstreamer();
     volna_daemon::memory::tune_memory();
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -33,5 +35,25 @@ fn main() {
     if let Err(e) = runtime.block_on(volna_daemon::daemon::run(launch)) {
         tracing::error!("{e:#}");
         std::process::exit(1);
+    }
+}
+
+/// Windows: the installer ships GStreamer itself, its DLLs next to this
+/// executable and the plugins in `gstreamer-1.0/`, instead of a system install.
+#[cfg(windows)]
+fn use_bundled_gstreamer() {
+    let Some(plugins) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("gstreamer-1.0")))
+        .filter(|d| d.is_dir())
+    else {
+        return;
+    };
+    // SAFETY: called first thing in `main`, before any other thread exists.
+    unsafe {
+        std::env::set_var("GST_PLUGIN_SYSTEM_PATH_1_0", &plugins);
+        std::env::set_var("GST_PLUGIN_PATH_1_0", &plugins);
+        // gst-plugin-scanner.exe is not shipped; scan in-process.
+        std::env::set_var("GST_REGISTRY_FORK", "no");
     }
 }

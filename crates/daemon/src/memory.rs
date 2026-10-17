@@ -1,6 +1,10 @@
 //! Process memory settings shared by `volna` and `volna-window` (both
 //! binaries also use mimalloc as their global allocator).
 
+// `mi_option_set` below comes from here. Without the explicit link the
+// Windows DLL build of volna-window's lib leaves it unresolved.
+extern crate mimalloc as _;
+
 /// Tokio workers. The work is network-bound: a few threads are plenty, and
 /// each one is a stack plus per-thread allocator state.
 pub const MAX_WORKERS: usize = 4;

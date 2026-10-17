@@ -4,13 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'ipc/socket_transport.dart';
+import 'ipc/platform_transport.dart';
 import 'state/connection.dart';
 import 'ui/app.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final transport = SocketTransport(autostart: true)..start();
+  final transport = await openPlatformTransport();
   // The daemon owns playback; the window just goes away when told to.
   transport.quit.listen((_) => exit(0));
   // `show` from the daemon (a second launch, the tray): raise the window.

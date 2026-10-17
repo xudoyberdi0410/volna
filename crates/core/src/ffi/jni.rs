@@ -22,7 +22,7 @@ use serde_json::Value;
 
 use super::{
     VolnaCore, borrowed, handle, set, volna_core_free_string, volna_core_init,
-    volna_core_js_result, volna_core_last_error, volna_core_player_report,
+    volna_core_js_prelude, volna_core_js_result, volna_core_last_error, volna_core_player_report,
     volna_core_set_js_callback, volna_core_set_player_callback,
 };
 
@@ -270,6 +270,17 @@ pub extern "system" fn Java_uz_khudoberdi_volna_core_VolnaCoreNative_nativeJsRes
         )
     };
     if done { JNI_TRUE } else { JNI_FALSE }
+}
+
+/// `volna_core_js_prelude`: the script the WebView loads once.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_uz_khudoberdi_volna_core_VolnaCoreNative_nativeJsPrelude<'l>(
+    env: JNIEnv<'l>,
+    _class: JClass<'l>,
+) -> JString<'l> {
+    // SAFETY: a static NUL-terminated string owned by the library.
+    let prelude = unsafe { borrowed(volna_core_js_prelude()) }.unwrap_or_default();
+    env.new_string(prelude).unwrap_or_default()
 }
 
 /// The Flutter engine is going away: drop its callbacks (reply, event,

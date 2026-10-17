@@ -55,6 +55,8 @@ pub struct Library {
     /// Likes feed the wave; `None` in tests that do not care.
     wave: Option<Arc<Wave<YtmSource>>>,
     listener: Mutex<Option<Listener>>,
+    /// Love on like and the scrobbler keys of `legacy_import`.
+    scrobble: std::sync::OnceLock<volna_scrobble::Scrobbling>,
 }
 
 pub fn now_ms() -> i64 {
@@ -116,7 +118,13 @@ impl Library {
             store,
             wave,
             listener: Mutex::new(None),
+            scrobble: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Connects the scrobblers (`api::scrobble`); set once at startup.
+    pub fn set_scrobble(&self, s: volna_scrobble::Scrobbling) {
+        let _ = self.scrobble.set(s);
     }
 
     pub fn store(&self) -> &Store {
@@ -151,6 +159,9 @@ impl Library {
         if on {
             let item = parse_item(kind, item)?;
             self.store.like(&item, now).map_err(err)?;
+            if let (Item::Track(t), Some(s)) = (&item, self.scrobble.get()) {
+                super::scrobble::love_on_like(s, t, true);
+            }
             if let (Item::Track(t), Some(wave)) = (&item, &self.wave)
                 && let Err(e) = wave
                     .record(PlayerEvent::Like {
@@ -163,6 +174,12 @@ impl Library {
             }
         } else {
             let id = item_id(kind, &item)?;
+            if kind == LikeKind::Track
+                && let Some(s) = self.scrobble.get()
+                && let Some(t) = self.track_for_unlove(&id, &item)
+            {
+                super::scrobble::love_on_like(s, &t, false);
+            }
             self.store.unlike(kind, &id).map_err(err)?;
             // Not `record(Like{liked: false})`: it would overwrite the wave's
             // track metadata with whatever (maybe bare) item came here.
@@ -175,6 +192,25 @@ impl Library {
         }
         self.changed(kind.as_str());
         Ok(on)
+    }
+
+    /// The unliked track with a title and artist for the scrobblers: the
+    /// item sent, or else the stored like (an unlike may carry only the id).
+    fn track_for_unlove(&self, id: &str, item: &Value) -> Option<Track> {
+        if let Ok(Item::Track(t)) = parse_item(LikeKind::Track, item.clone())
+            && !t.title.is_empty()
+            && !t.artists.is_empty()
+        {
+            return Some(t);
+        }
+        self.store
+            .likes(LikeKind::Track)
+            .ok()?
+            .into_iter()
+            .find_map(|l| match l.item {
+                Item::Track(t) if t.video_id == id => Some(t),
+                _ => None,
+            })
     }
 
     pub fn is_liked(
@@ -381,6 +417,12 @@ impl Library {
             self.store.pin(p).map_err(err)?;
         }
         self.store.set_legacy(&m.kv).map_err(err)?;
+        if let Some(s) = self.scrobble.get() {
+            let keys = m.kv.iter().cloned().collect();
+            if let Err(e) = super::scrobble::import_legacy(s, &keys) {
+                tracing::warn!("scrobbler settings import failed: {e}");
+            }
+        }
         self.store
             .set_meta(LEGACY_IMPORTED, &now.to_string())
             .map_err(err)?;

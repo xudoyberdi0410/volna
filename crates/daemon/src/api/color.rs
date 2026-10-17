@@ -198,7 +198,10 @@ pub fn palette_from_pixels(pixels: &[[u8; 3]]) -> Option<Palette> {
     let mut swatches: Vec<(Rgb, f32)> = Vec::new();
     for b in &boxes {
         let (c, share) = (Rgb::mean(b), b.len() as f32 / total);
-        match swatches.iter_mut().find(|(s, _)| s.distance(c) < MERGE_DISTANCE) {
+        match swatches
+            .iter_mut()
+            .find(|(s, _)| s.distance(c) < MERGE_DISTANCE)
+        {
             Some((s, w)) => {
                 *s = s.mix(c.0, share / (*w + share));
                 *w += share;
@@ -376,9 +379,13 @@ mod tests {
     #[test]
     fn two_colours_split_into_dominant_and_accent() {
         // 70 % dark navy, 30 % orange.
-        let bytes = png(100, 100, |x, _| {
-            if x < 70 { [20, 30, 70] } else { [240, 140, 20] }
-        });
+        let bytes = png(
+            100,
+            100,
+            |x, _| {
+                if x < 70 { [20, 30, 70] } else { [240, 140, 20] }
+            },
+        );
         let p = palette_from_bytes(&bytes).unwrap();
         assert_eq!(p.dominant, "#141e46");
         assert_eq!(p.accent, "#f08c14");
@@ -417,16 +424,26 @@ mod tests {
 
     #[test]
     fn noise_gives_at_most_eight_swatches() {
-        let bytes = png(64, 64, |x, y| [(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8]);
+        let bytes = png(64, 64, |x, y| {
+            [(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8]
+        });
         let p = palette_from_bytes(&bytes).unwrap();
-        assert!((2..=SWATCHES).contains(&p.swatches.len()), "{:?}", p.swatches);
+        assert!(
+            (2..=SWATCHES).contains(&p.swatches.len()),
+            "{:?}",
+            p.swatches
+        );
         assert!(p.swatches.windows(2).all(|w| w[0].share >= w[1].share));
     }
 
     #[test]
     fn transparent_and_broken_images_fail() {
         assert!(palette_from_pixels(&[]).is_none());
-        assert!(palette_from_bytes(b"not an image").unwrap_err().starts_with("upstream: "));
+        assert!(
+            palette_from_bytes(b"not an image")
+                .unwrap_err()
+                .starts_with("upstream: ")
+        );
         let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 0]));
         let mut buf = std::io::Cursor::new(Vec::new());
         img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
@@ -459,7 +476,11 @@ mod tests {
             source(&format!("http://volna.localhost/img/?u={enc}")).unwrap(),
             (lh3.to_owned(), FETCH_PX)
         );
-        assert!(source("volna://img/?s=3").unwrap_err().starts_with("bad_args"));
+        assert!(
+            source("volna://img/?s=3")
+                .unwrap_err()
+                .starts_with("bad_args")
+        );
         assert!(source("not a uri").unwrap_err().starts_with("bad_args"));
     }
 
@@ -483,7 +504,11 @@ mod tests {
     async fn command_validates_without_network() {
         let state = crate::protocol::tests::test_state();
         let p = Palettes::default();
-        assert!(call(&p, &state.images, "catalog_album", &json!({})).await.is_none());
+        assert!(
+            call(&p, &state.images, "catalog_album", &json!({}))
+                .await
+                .is_none()
+        );
         let e = call(&p, &state.images, "color_palette", &json!({})).await;
         assert!(e.unwrap().unwrap_err().starts_with("bad_args"));
         let e = call(

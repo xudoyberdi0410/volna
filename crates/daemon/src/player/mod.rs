@@ -47,6 +47,7 @@ pub fn setup(
     state: &AppState,
     wave: &WaveState,
     library: &Arc<Library>,
+    scrobble: &volna_scrobble::Scrobbling,
 ) -> PlayerState {
     let journal = Arc::new(Journal::open(&data.join("player-journal.jsonl")));
     let handle = match volna_player::init_gstreamer() {
@@ -58,6 +59,7 @@ pub fn setup(
                 ytm: wave.ytm().clone(),
                 journal: journal.clone(),
                 library: library.clone(),
+                scrobble: scrobble.clone(),
             };
             let paths = volna_player::persist::Paths {
                 queue: data.join("player-queue.json"),

@@ -69,7 +69,15 @@ pub async fn call(d: &std::sync::Arc<Daemon>, cmd: &str, a: &Value) -> Result<Va
         "wave_next" => out(wave::wave_next(w, opt(a, "count")?).await),
         "wave_requeue" => out(wave::wave_requeue(w, arg(a, "dropped")?, opt(a, "count")?).await),
         "wave_stop" => out(wave::wave_stop(w).await),
-        "wave_event" => out(wave::wave_event(w, arg(a, "event")?).await),
+        "wave_event" => {
+            let ev: wave::UiEvent = arg(a, "event")?;
+            // Likes reach the daemon here today: love on the scrobblers too.
+            if let wave::UiEvent::Like { track, liked } = &ev {
+                let t = volna_ytm::Track::from(track.clone());
+                crate::api::scrobble::love_on_like(&d.scrobble, &t, *liked);
+            }
+            out(wave::wave_event(w, ev).await)
+        }
         "wave_sync_likes" => out(wave::wave_sync_likes(w, arg(a, "tracks")?).await),
         "app_quit" => {
             d.quit();

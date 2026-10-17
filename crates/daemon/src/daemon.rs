@@ -91,6 +91,8 @@ pub struct Daemon {
     pub wave: WaveState,
     pub library: Arc<Library>,
     pub player: PlayerState,
+    /// Last.fm, Libre.fm, ListenBrainz, Maloja; off until configured.
+    pub scrobble: volna_scrobble::Scrobbling,
     window: WindowLink,
     child: Mutex<Option<std::process::Child>>,
     quitting: AtomicBool,
@@ -297,13 +299,22 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
     let net = NetworkState::new(SettingsStore::new(&dirs.config));
     let wave = WaveState::open(&dirs.data, app.api.ytm())?;
     let library = Arc::new(Library::open(&dirs.data, Some(wave.engine()))?);
-    let player = player::setup(&dirs.data, &dirs.config, &app, &wave, &library);
+    let scrobble = {
+        let net = app.net.clone();
+        let http = volna_scrobble::ReqwestHttp::new(move || net.client());
+        volna_scrobble::Scrobbling::open(&dirs.data.join("scrobble.sqlite3"), Arc::new(http))
+            .map_err(anyhow::Error::msg)?
+    };
+    scrobble.spawn_retry(Duration::from_secs(120));
+    library.set_scrobble(scrobble.clone());
+    let player = player::setup(&dirs.data, &dirs.config, &app, &wave, &library, &scrobble);
     let daemon = Arc::new(Daemon {
         app,
         net,
         wave,
         library,
         player,
+        scrobble,
         window: WindowLink::default(),
         child: Mutex::new(None),
         quitting: AtomicBool::new(false),

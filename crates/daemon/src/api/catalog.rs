@@ -81,9 +81,10 @@ async fn run(ytm: &YtmClient, cmd: &str, a: &Value) -> Result<Value, String> {
             let (c, f) = (text(a, "continuation")?, filter(a)?);
             out(ytm.search_more(&c, f).await.map_err(err))
         }
-        "catalog_suggestions" => {
-            out(ytm.search_suggestions(&text(a, "input")?).await.map_err(err))
-        }
+        "catalog_suggestions" => out(ytm
+            .search_suggestions(&text(a, "input")?)
+            .await
+            .map_err(err)),
         "catalog_album" => out(ytm.album(&id(a, "id")?).await.map_err(err)),
         "catalog_artist" => out(ytm.artist(&id(a, "id")?).await.map_err(err)),
         "catalog_playlist" => out(ytm.playlist(&id(a, "id")?).await.map_err(err)),
@@ -100,10 +101,7 @@ async fn run(ytm: &YtmClient, cmd: &str, a: &Value) -> Result<Value, String> {
             out(ytm.home(n.clamp(1, 50)).await.map_err(err))
         }
         "catalog_moods" => out(ytm.moods_and_genres().await.map_err(err)),
-        "catalog_mood" => out(ytm
-            .mood_playlists(&text(a, "params")?)
-            .await
-            .map_err(err)),
+        "catalog_mood" => out(ytm.mood_playlists(&text(a, "params")?).await.map_err(err)),
         other => Err(format!("unknown command {other}")),
     }
 }
@@ -132,7 +130,10 @@ mod tests {
             ("catalog_artist", json!({"id": ""})),
             ("catalog_track", json!({"id": "dQw4w9WgXcQ"})), // key is videoId
             ("catalog_search", json!({"query": "  "})),
-            ("catalog_search", json!({"query": "x", "filter": "podcasts"})),
+            (
+                "catalog_search",
+                json!({"query": "x", "filter": "podcasts"}),
+            ),
             ("catalog_search_more", json!({"continuation": null})),
             ("catalog_playlist_more", json!({})),
             ("catalog_suggestions", json!({"input": 5})),
@@ -222,7 +223,12 @@ mod live {
         );
         assert!(!arr(&all, "items").is_empty());
 
-        let songs = ok(&ytm, "catalog_search", json!({"query": q, "filter": "songs"})).await;
+        let songs = ok(
+            &ytm,
+            "catalog_search",
+            json!({"query": q, "filter": "songs"}),
+        )
+        .await;
         let items = arr(&songs, "items");
         assert!(!items.is_empty());
         items.iter().for_each(|i| {
@@ -236,19 +242,32 @@ mod live {
             json!({"continuation": cont, "filter": "songs"}),
         )
         .await;
-        println!("songs: {} + {} more", items.len(), arr(&more, "items").len());
+        println!(
+            "songs: {} + {} more",
+            items.len(),
+            arr(&more, "items").len()
+        );
         assert!(!arr(&more, "items").is_empty());
 
         let sugg = ok(&ytm, "catalog_suggestions", json!({"input": "скрипт"})).await;
         assert!(!arr(&sugg, "queries").is_empty(), "{sugg}");
 
-        let albums = ok(&ytm, "catalog_search", json!({"query": q, "filter": "albums"})).await;
+        let albums = ok(
+            &ytm,
+            "catalog_search",
+            json!({"query": q, "filter": "albums"}),
+        )
+        .await;
         let album_id = arr(&albums, "items")[0]["browse_id"]
             .as_str()
             .expect("album browse_id")
             .to_owned();
         let album = ok(&ytm, "catalog_album", json!({ "id": album_id })).await;
-        println!("album {}: {} tracks", album["title"], arr(&album, "tracks").len());
+        println!(
+            "album {}: {} tracks",
+            album["title"],
+            arr(&album, "tracks").len()
+        );
         assert!(!arr(&album, "tracks").is_empty());
         arr(&album, "tracks").iter().for_each(assert_track);
 

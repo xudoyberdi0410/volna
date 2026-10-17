@@ -12,7 +12,7 @@ use volna_streams::{FailureKind, VideoId};
 use volna_wave::{PlayerEvent as WaveEvent, Wave, YtmSource};
 use volna_ytm::YtmClient;
 
-use super::convert::{cover_source, track_input, ytm_track};
+use super::convert::{cover_source, scrobble_track, track_input, ytm_track};
 use super::journal::{Journal, Record};
 use crate::api::library::Library;
 use crate::state::Streams;
@@ -25,6 +25,8 @@ pub struct AppHooks {
     pub journal: Arc<Journal>,
     /// History is recorded here, not by the window.
     pub library: Arc<Library>,
+    /// Now playing on start, scrobbles on end (window or not).
+    pub scrobble: volna_scrobble::Scrobbling,
 }
 
 fn quality(q: Quality) -> volna_streams::Quality {
@@ -42,6 +44,33 @@ fn wave_error(e: volna_wave::Error) -> String {
 }
 
 impl AppHooks {
+    /// Feeds the scrobblers in the background, so the player never waits on
+    /// them. They do nothing until a service is turned on in the daemon.
+    fn scrobble_event(&self, ev: &PlayEvent) {
+        let s = self.scrobble.clone();
+        match ev {
+            PlayEvent::Start { track, .. } => {
+                let t = scrobble_track(track);
+                tokio::spawn(async move { s.now_playing(&t).await });
+            }
+            PlayEvent::End {
+                track,
+                started_at,
+                position,
+                duration,
+                at,
+                ..
+            } => {
+                let t = scrobble_track(track);
+                let (started_at, position, duration, at) = (*started_at, *position, *duration, *at);
+                tokio::spawn(async move {
+                    s.play_ended(t, started_at, position, duration, at).await;
+                });
+            }
+            _ => {}
+        }
+    }
+
     /// YouTube Music radio of `seed`, minus `exclude`, at most `count`.
     async fn radio(
         &self,
@@ -176,6 +205,7 @@ impl Hooks for AppHooks {
 
     async fn on_play_event(&self, ev: PlayEvent) -> PlayEventOutcome {
         let mut out = PlayEventOutcome::default();
+        self.scrobble_event(&ev);
         let wave_ev = match &ev {
             PlayEvent::Start { track, in_wave, .. } => Some(WaveEvent::Start {
                 track: ytm_track(track),

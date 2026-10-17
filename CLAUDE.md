@@ -17,6 +17,9 @@
 - `crates/net` — reqwest-клиент с прокси (Direct / URL / VLESS через xray).
 - `crates/streams` — резолв аудио через yt-dlp и локальный аудиосервер с Range.
 - `crates/wave` — движок «Моей волны», SQLite.
+- `crates/scrobble` — скробблеры (Last.fm, Libre.fm, ListenBrainz, Maloja) с офлайн-очередью
+  в SQLite; команды `scrobble_*` — `crates/daemon/src/api/scrobble.rs`. По умолчанию выключены,
+  пока их скробблит старый UI.
 - `docs/` — `STRUCTURE.md`, `hifi-api-contract.md` (формат ответов для фронта), `streams.md`.
 - `packaging/arch/PKGBUILD` — пакет pacman. Windows собирается в CI (`.github/workflows/build.yml`).
 

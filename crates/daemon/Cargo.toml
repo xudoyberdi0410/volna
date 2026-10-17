@@ -36,6 +36,7 @@ volna-net = { workspace = true }
 volna-streams = { workspace = true }
 volna-wave = { workspace = true }
 volna-player = { workspace = true }
+volna-scrobble = { workspace = true }
 volna-lyrics = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]

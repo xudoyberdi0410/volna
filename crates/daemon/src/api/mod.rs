@@ -18,6 +18,7 @@ pub mod catalog;
 pub mod color;
 pub mod library;
 pub mod lyrics;
+pub mod scrobble;
 
 /// The handler of `cmd`, if one of these modules owns it.
 pub async fn call(d: &Daemon, cmd: &str, a: &Value) -> Option<Result<Value, String>> {
@@ -31,6 +32,16 @@ pub async fn call(d: &Daemon, cmd: &str, a: &Value) -> Option<Result<Value, Stri
         return Some(r);
     }
     if let Some(r) = lyrics::call(d, cmd, a).await {
+        return Some(r);
+    }
+    if cmd == "scrobble_import_legacy" {
+        // The scrobbler keys `legacy_import` kept in the library database.
+        return Some(scrobble::import_legacy_from_library(
+            &d.scrobble,
+            &d.library,
+        ));
+    }
+    if let Some(r) = scrobble::call(&d.scrobble, cmd, a).await {
         return Some(r);
     }
     None

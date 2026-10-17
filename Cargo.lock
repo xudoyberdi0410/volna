@@ -2302,6 +2302,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "md5"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4857,6 +4863,7 @@ dependencies = [
  "volna-lyrics",
  "volna-net",
  "volna-player",
+ "volna-scrobble",
  "volna-streams",
  "volna-wave",
  "volna-ytm",
@@ -4915,6 +4922,23 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "volna-scrobble"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "md5",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]

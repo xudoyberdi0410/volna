@@ -96,13 +96,17 @@ class _MoodChips extends StatelessWidget {
           return ActionChip(
             avatar: Container(width: 4, height: 18, decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(2))),
             label: Text(m.title),
-            onPressed: () => context.push('/mood/${Uri.encodeComponent(m.params)}?title=${Uri.encodeComponent(m.title)}'),
+            onPressed: () => openMood(context, m),
           );
         },
       ),
     );
   }
 }
+
+/// The mood page (`/mood/:params`, a browse-only route).
+void openMood(BuildContext context, Mood m) =>
+    context.push('/mood/${Uri.encodeComponent(m.params)}?title=${Uri.encodeQueryComponent(m.title)}');
 
 class _ShelvesSkeleton extends StatelessWidget {
   const _ShelvesSkeleton();

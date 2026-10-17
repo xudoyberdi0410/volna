@@ -5,9 +5,9 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../api/models.dart';
+import '../nav.dart';
 import '../widgets/cards.dart';
 import '../widgets/cover.dart';
 import '../widgets/format.dart';
@@ -388,8 +388,8 @@ class _SuggestionItem extends ConsumerWidget {
         onOpen();
         if (it is TrackItem) {
           TrackActions(context, ref).play([it.track], 0);
-        } else if (itemRoute(it) case final r?) {
-          context.push(r);
+        } else {
+          openItem(context, it);
         }
       },
     );
@@ -416,8 +416,8 @@ class _TopResult extends ConsumerWidget {
     void open() {
       if (it is TrackItem) {
         TrackActions(context, ref).play([it.track], 0);
-      } else if (itemRoute(it) case final r?) {
-        context.push(r);
+      } else {
+        openItem(context, it);
       }
     }
 
@@ -500,6 +500,6 @@ class _ArtistTile extends StatelessWidget {
         title: Text(artist.name, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: artist.audience == null ? null : Text(artist.audience!),
         trailing: const Icon(Icons.chevron_right_rounded),
-        onTap: () => context.push('/artist/${artist.id}'),
+        onTap: () => openArtist(context, artist.id),
       );
 }

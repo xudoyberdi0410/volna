@@ -5,14 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/library.dart';
+import '../../state/player.dart' show clockProvider;
 import '../widgets/cards.dart';
 import '../widgets/format.dart';
 import '../widgets/states.dart';
 import '../widgets/track_actions.dart';
 import '../widgets/track_row.dart';
-
-/// "Now" for the day headers; tests pin it.
-final clockProvider = Provider<DateTime Function()>((_) => DateTime.now);
 
 class HistoryScreen extends ConsumerWidget {
   const HistoryScreen({super.key});
@@ -24,7 +22,8 @@ class HistoryScreen extends ConsumerWidget {
     final t = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
     final empty = h.value?.isEmpty ?? true;
-    final now = ref.watch(clockProvider)();
+    // The player's clock (tests pin it).
+    final now = DateTime.fromMillisecondsSinceEpoch(ref.watch(clockProvider)());
 
     Future<void> clear() async {
       final ok = await confirm(context,

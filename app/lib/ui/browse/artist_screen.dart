@@ -2,9 +2,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../api/models.dart';
+import '../nav.dart';
 import '../../state/library.dart';
 import '../widgets/cards.dart';
 import '../widgets/collection_header.dart';
@@ -104,7 +104,7 @@ class _ArtistViewState extends ConsumerState<_ArtistView> {
             trailing: a.topSongsPlaylistId == null
                 ? null
                 : TextButton(
-                    onPressed: () => context.push('/playlist/${a.topSongsPlaylistId}'),
+                    onPressed: () => openPlaylist(context, a.topSongsPlaylistId!),
                     child: const Text('Все треки'),
                   ),
           ),

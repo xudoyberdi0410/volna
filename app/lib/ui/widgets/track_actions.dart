@@ -14,6 +14,7 @@ import '../../api/player.dart';
 import '../../api/player_models.dart';
 import '../../state/connection.dart';
 import '../../state/library.dart';
+import '../nav.dart';
 import 'cover.dart';
 import 'format.dart';
 import 'states.dart';
@@ -117,6 +118,7 @@ List<PopupMenuEntry<VoidCallback>> trackMenuItems(
   final a = TrackActions(context, ref);
   final liked = ref.read(likesProvider).contains(LikeKind.track, t.videoId);
   final router = GoRouter.maybeOf(context);
+  final albumId = t.album?.id;
   PopupMenuItem<VoidCallback> item(IconData icon, String label, VoidCallback f) => PopupMenuItem(
         value: f,
         height: 40,
@@ -135,9 +137,9 @@ List<PopupMenuEntry<VoidCallback>> trackMenuItems(
         liked ? 'Убрать из любимых' : 'В любимые', () => a.toggleLike(t)),
     if (router != null && (t.album?.id != null || artist != null)) const PopupMenuDivider(height: 8),
     if (router != null && t.album?.id != null)
-      item(Icons.album_rounded, 'Перейти к альбому', () => router.push('/album/${t.album!.id}')),
+      item(Icons.album_rounded, 'Перейти к альбому', () => openAlbum(context, albumId!)),
     if (router != null && artist != null)
-      item(Icons.person_rounded, 'Перейти к исполнителю', () => router.push('/artist/${artist.id}')),
+      item(Icons.person_rounded, 'Перейти к исполнителю', () => openArtist(context, artist.id!)),
     if (onRemove != null) ...[
       const PopupMenuDivider(height: 8),
       item(Icons.remove_circle_outline_rounded, removeLabel, onRemove),

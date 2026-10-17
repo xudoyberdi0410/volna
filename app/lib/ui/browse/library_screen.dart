@@ -4,9 +4,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../api/models.dart';
+import '../nav.dart';
 import '../../state/library.dart';
 import '../widgets/cards.dart';
 import '../widgets/cover.dart';
@@ -15,11 +15,11 @@ import '../widgets/states.dart';
 import '../widgets/track_actions.dart';
 import '../widgets/track_row.dart';
 
-String pinRoute(Pin p) => switch (p.kind) {
-      PinKind.album => '/album/${p.id}',
-      PinKind.artist => '/artist/${p.id}',
-      PinKind.playlist => '/playlist/${p.id}',
-      PinKind.userPlaylist => '/library/playlist/${p.id}',
+void openPin(BuildContext context, Pin p) => switch (p.kind) {
+      PinKind.album => openAlbum(context, p.id),
+      PinKind.artist => openArtist(context, p.id),
+      PinKind.playlist => openPlaylist(context, p.id),
+      PinKind.userPlaylist => openLibraryPlaylist(context, p.id),
     };
 
 /// Creates a playlist after asking its name; opens it when [open].
@@ -27,7 +27,7 @@ Future<void> createPlaylistFlow(BuildContext context, WidgetRef ref, {bool open 
   final name = await promptText(context, title: 'Новый плейлист', label: 'Название', action: 'Создать');
   if (name == null || !context.mounted) return;
   final info = await guarded(context, () => ref.read(libraryApiProvider).createPlaylist(name));
-  if (info != null && open && context.mounted) context.push('/library/playlist/${info.id}');
+  if (info != null && open && context.mounted) openLibraryPlaylist(context, info.id);
 }
 
 class LibraryScreen extends ConsumerWidget {
@@ -54,7 +54,7 @@ class LibraryScreen extends ConsumerWidget {
                     style: t.headlineMedium?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.6)),
               ),
               TextButton.icon(
-                onPressed: () => context.push('/history'),
+                onPressed: () => openHistory(context),
                 icon: const Icon(Icons.history_rounded),
                 label: const Text('История'),
               ),
@@ -113,7 +113,7 @@ class _Pins extends ConsumerWidget {
             borderRadius: BorderRadius.circular(10),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: () => context.push(pinRoute(p)),
+              onTap: () => openPin(context, p),
               onSecondaryTapUp: (d) => _unpinMenu(context, ref, p, d.globalPosition),
               onLongPress: () => _unpinMenu(context, ref, p, null),
               child: Padding(
@@ -267,7 +267,7 @@ class _UserPlaylists extends ConsumerWidget {
                 cover: CoverCollage(urls: p.cover != null ? [p.cover!] : p.thumbnails, size: w, radius: 10, seed: p.id),
                 title: p.name,
                 subtitle: tracksCount(p.trackCount),
-                onTap: () => context.push('/library/playlist/${p.id}'),
+                onTap: () => openLibraryPlaylist(context, p.id),
               ),
           ],
         ),

@@ -8,29 +8,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../api/models.dart';
-import '../../api/player_models.dart';
-import '../../state/connection.dart';
 import '../../state/library.dart';
+import '../../state/player.dart' show playerViewProvider;
+import '../nav.dart';
 import 'cover.dart';
 import 'format.dart';
 import 'track_actions.dart';
 
-/// Id of the track the player is on (to highlight its row), from the
-/// snapshot and then `player:state` events.
-final nowPlayingIdProvider = StreamProvider<String?>((ref) async* {
-  final player = ref.watch(playerProvider);
-  final events = player.events.whereType<StateEvent>().map((e) => e.state.trackId);
-  String? first;
-  try {
-    first = (await player.snapshot()).state.trackId;
-  } catch (_) {}
-  yield first;
-  yield* events;
-}, retry: noRetry);
-
-extension<T> on Stream<T> {
-  Stream<S> whereType<S>() => where((e) => e is S).cast<S>();
-}
+/// Id of the track the player is on (to highlight its row).
+final nowPlayingIdProvider =
+    Provider<String?>((ref) => ref.watch(playerViewProvider.select((v) => v.state.trackId)));
 
 /// Width above which rows show the album column.
 const wideRowBreakpoint = 760.0;
@@ -83,7 +70,7 @@ class _TrackRowState extends ConsumerState<TrackRow> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final tt = theme.textTheme;
-    final playing = ref.watch(nowPlayingIdProvider.select((v) => v.value == t.videoId));
+    final playing = ref.watch(nowPlayingIdProvider.select((id) => id == t.videoId));
     final liked = ref.watch(isLikedProvider((LikeKind.track, t.videoId)));
     final dim = !t.playable;
     final accent = playing ? cs.primary : null;
@@ -290,7 +277,7 @@ class _ArtistLinksState extends State<ArtistLinks> {
       if (spans.isNotEmpty) spans.add(const TextSpan(text: ', '));
       final id = a.id;
       if (id != null && router != null) {
-        final r = TapGestureRecognizer()..onTap = () => router.push('/artist/$id');
+        final r = TapGestureRecognizer()..onTap = () => openArtist(context, id);
         _recognizers.add(r);
         spans.add(TextSpan(
           text: a.name,
@@ -338,7 +325,7 @@ class _AlbumLinkState extends State<_AlbumLink> {
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(onTap: () => context.push('/album/$id'), child: text),
+        child: GestureDetector(onTap: () => openAlbum(context, id), child: text),
       ),
     );
   }

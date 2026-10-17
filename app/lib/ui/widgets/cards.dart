@@ -3,10 +3,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-
 import '../../api/models.dart';
 import '../../state/library.dart';
+import '../nav.dart';
 import 'cover.dart';
 import 'format.dart';
 import 'track_actions.dart';
@@ -21,12 +20,15 @@ abstract final class Gap {
   static double side(double width) => width < 600 ? pageNarrow : page;
 }
 
-/// Where an item opens.
-String? itemRoute(Item item) => switch (item) {
-      AlbumItem(:final album) => '/album/${album.browseId}',
-      ArtistItem(:final artist) => '/artist/${artist.id}',
-      PlaylistItem(:final playlist) => '/playlist/${playlist.id}',
-      TrackItem(:final track) => track.album?.id == null ? null : '/album/${track.album!.id}',
+/// Whether [openItem] can open [item] (a track needs an album).
+bool canOpenItem(Item item) => item is! TrackItem || item.track.album?.id != null;
+
+/// Opens the page of [item] (a track opens its album).
+void openItem(BuildContext context, Item item) => switch (item) {
+      AlbumItem(:final album) => openAlbum(context, album.browseId),
+      ArtistItem(:final artist) => openArtist(context, artist.id),
+      PlaylistItem(:final playlist) => openPlaylist(context, playlist.id),
+      TrackItem(:final track) => track.album?.id == null ? null : openAlbum(context, track.album!.id!),
     };
 
 /// Subtitle line for an item card.
@@ -218,7 +220,6 @@ class ItemCard extends ConsumerWidget {
       AlbumItem() => Icons.album_rounded,
       TrackItem() => Icons.music_note_rounded,
     };
-    final route = itemRoute(item);
     final it = item;
     return MediaCard(
       width: width,
@@ -235,7 +236,7 @@ class ItemCard extends ConsumerWidget {
       subtitle: itemSubtitle(item),
       onTap: switch (it) {
         TrackItem(:final track) => () => TrackActions(context, ref).play([track], 0),
-        _ => route == null ? null : () => context.push(route),
+        _ => () => openItem(context, it),
       },
       onMenu: it is TrackItem
           ? (at) => showTrackMenu(context, ref, it.track, at)
@@ -252,9 +253,9 @@ Future<void> showItemMenu(BuildContext context, WidgetRef ref, Item item, Offset
     context: context,
     position: RelativeRect.fromRect(at & const Size(1, 1), Offset.zero & overlay.size),
     items: [
-      if (itemRoute(item) case final r?)
+      if (canOpenItem(item))
         PopupMenuItem(
-          value: () => context.push(r),
+          value: () => openItem(context, item),
           height: 40,
           child: const Row(children: [Icon(Icons.open_in_new_rounded, size: 20), SizedBox(width: 14), Text('Открыть')]),
         ),

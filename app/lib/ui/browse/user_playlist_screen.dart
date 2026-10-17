@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../api/models.dart';
+import '../nav.dart';
 import '../../state/library.dart';
 import '../widgets/cards.dart';
 import '../widgets/collection_header.dart';
@@ -102,7 +103,7 @@ class _UserPlaylistViewState extends ConsumerState<_UserPlaylistView> {
     final gone = await guarded(context, () => _api.deletePlaylist(_id));
     if (gone == true && mounted) {
       final router = GoRouter.of(context);
-      router.canPop() ? router.pop() : router.go('/library');
+      router.canPop() ? router.pop() : openLibrary(context);
     }
   }
 
@@ -160,7 +161,7 @@ class _UserPlaylistViewState extends ConsumerState<_UserPlaylistView> {
             title: 'В плейлисте пока пусто',
             subtitle: 'Добавляйте треки через меню ⋮ → «Добавить в плейлист…»',
             action: FilledButton.tonalIcon(
-              onPressed: () => context.push('/search'),
+              onPressed: () => openSearch(context),
               icon: const Icon(Icons.search_rounded),
               label: const Text('Найти музыку'),
             ),

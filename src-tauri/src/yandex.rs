@@ -10,7 +10,7 @@
 //!   cookies, so the next import only flashes it. It has no IPC capabilities.
 //!
 //! The API is reached directly, not through the app proxy: it answers from
-//! Uzbekistan, while the proxy's exit country may not have the service.
+//! the listener's own country, while the proxy's exit country may not have the service.
 //! Matching the tracks to YouTube Music is the UI's job (`ui/js/yandex-import.js`).
 
 use std::sync::Mutex;

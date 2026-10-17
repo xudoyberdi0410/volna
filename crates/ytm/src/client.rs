@@ -17,8 +17,8 @@ use crate::ytcfg::{self, YtCfg};
 pub const ORIGIN_URL: &str = "https://music.youtube.com";
 const CLIENT_NAME: &str = "WEB_REMIX";
 const CLIENT_NAME_ID: &str = "67";
-/// Accept the EU cookie banner up front; without it EU exits (the Hetzner
-/// box is in Finland) get redirected to consent.youtube.com.
+/// Accept the EU cookie banner up front; without it EU exits (e.g. a VPS in
+/// Finland) get redirected to consent.youtube.com.
 const CONSENT_COOKIE: &str = "SOCS=CAI";
 const DEFAULT_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0";

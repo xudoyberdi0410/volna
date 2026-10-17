@@ -30,22 +30,22 @@ VOLNA_TEST_PROXY=socks5h://127.0.0.1:1081 VOLNA_TEST_COOKIES=chrome \
 
 При выпуске нового пакета увеличивать `pkgrel` в PKGBUILD.
 
-## Сеть: почему так, а не иначе (2026-10-17)
+## Сеть: почему так, а не иначе
 
-- С узбекского IP music.youtube.com отвечает «not available in your area», поэтому
-  метаданные идут только через зарубежный выход.
-- С IP Hetzner (203.0.113.10) без cookies yt-dlp получает «Sign in to confirm you're not a bot».
-- Рабочая схема: настройки → «Сеть» = Proxy URL `socks5h://127.0.0.1:1081` (пользовательский
-  сервис `ssh-socks`) + cookies из Chrome. Настройки: `~/.config/uz.khudoberdi.volna/settings.json`.
-- Под Hyprland yt-dlp не угадывает связку ключей Chrome, поэтому `streams` сам дописывает
-  `+kwallet6` (или gnomekeyring) для Chromium-браузеров.
+- Если music.youtube.com недоступен в вашей стране («not available in your area»),
+  метаданные нужно пускать через зарубежный прокси.
+- С IP датацентра без cookies yt-dlp получает бот-проверку «Sign in to confirm you're not a bot».
+- Рабочая схема: настройки → «Сеть» = Proxy URL (например, `socks5h://127.0.0.1:1081` от
+  `ssh -D` до своего сервера) + cookies из браузера. Настройки: `~/.config/uz.khudoberdi.volna/settings.json`.
+- Вне KDE/GNOME (например, под Hyprland) yt-dlp не угадывает связку ключей Chrome, поэтому
+  `streams` сам дописывает `+kwallet6` (или gnomekeyring) для Chromium-браузеров.
 - Ссылки клиента web_embedded googlevideo часто отбивает 403 (эксперимент с PO token,
   привязанным к видео). Поэтому резолв идёт сначала через `player_client=web_music`, и нужен
   провайдер PO token: AUR `bgutil-ytdlp-pot-provider`, пользовательский сервис `bgutil-pot`
   на 127.0.0.1:4416.
-- Яндекс Музыка ходит напрямую, без прокси (с узбекского IP сервис доступен). Токен берётся
-  из сессии Яндекса в Chrome: yt-dlp выгружает cookies, `oauth.yandex.uz/authorize` сразу
-  отдаёт токен (сессия на `.yandex.uz`, не `.ru`). Живой тест:
+- Яндекс Музыка ходит напрямую, без прокси: у выхода прокси сервис может быть недоступен.
+  Токен берётся из сессии Яндекса в браузере: yt-dlp выгружает cookies, `oauth.yandex.<tld>/authorize`
+  сразу отдаёт токен (домен — тот, где есть сессия: `.ru`, `.uz` и т.д.). Живой тест:
   `VOLNA_TEST_COOKIES=chrome cargo test -p volna yandex_live -- --ignored --nocapture`.
 - Тихий звук бывает из-за громкости потока, сохранённой в WirePlumber
   (`~/.local/state/wireplumber/stream-properties`), а не из-за кода.

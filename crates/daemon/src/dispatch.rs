@@ -40,6 +40,12 @@ pub async fn call(d: &std::sync::Arc<Daemon>, cmd: &str, a: &Value) -> Result<Va
     if let Some(r) = crate::player::commands::call(&d.player, cmd, a, vis).await {
         return r;
     }
+    if let Some(r) = crate::api::catalog::call(&d.app.api.ytm(), cmd, a).await {
+        return r;
+    }
+    if let Some(r) = crate::api::color::call(&d.app.palettes, &d.app.images, cmd, a).await {
+        return r;
+    }
     let (app, net, w) = (&d.app, &d.net, &d.wave);
     match cmd {
         "ytdlp_version" => out(commands::ytdlp_version(app).await),

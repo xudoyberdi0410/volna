@@ -2,14 +2,15 @@
 # Сборка: cd packaging/arch && makepkg -si
 pkgname=volna
 pkgver=0.1.0
-pkgrel=9
+pkgrel=10
 pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
 arch=('x86_64')
 license=('Apache-2.0')
 # GStreamer plays the audio itself (playbin3, opus, aac, pulse/pipewire, scaletempo).
-depends=('webkit2gtk-4.1' 'gtk3' 'yt-dlp' 'deno' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'bgutil-ytdlp-pot-provider')
-optdepends=('xray: режим VLESS в настройках сети')
-makedepends=('cargo')  # + bun (стоит вне pacman)
+depends=('gtk3' 'yt-dlp' 'deno' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-libav' 'bgutil-ytdlp-pot-provider')
+optdepends=('xray: режим VLESS в настройках сети'
+            'webkit2gtk-4.1: вход в Яндекс в окне приложения')
+makedepends=('cargo' 'cmake' 'ninja' 'clang')  # + flutter (стоит вне pacman)
 options=('!lto' '!debug')
 
 _root="$(realpath "$startdir/../..")"
@@ -17,20 +18,22 @@ _root="$(realpath "$startdir/../..")"
 _target="${CARGO_TARGET_DIR:-$_root/target}"
 
 build() {
-  cd "$_root/ui"
-  bun install --frozen-lockfile
-  bun run tauri build --no-bundle
   cd "$_root"
   cargo build --release -p volna-daemon
+  cd "$_root/app"
+  flutter build linux --release
 }
 
 package() {
-  # volna: the daemon (player, tray, MPRIS); volna-window: the UI process it starts.
+  # volna: the daemon (player, tray, MPRIS); it starts the Flutter window
+  # from /usr/lib/volna, which finds the daemon next to itself.
   install -Dm755 "$_target/release/volna" "$pkgdir/usr/bin/volna"
-  install -Dm755 "$_target/release/volna-window" "$pkgdir/usr/bin/volna-window"
-  install -Dm644 "$_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/volna.png"
-  install -Dm644 "$_root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/volna.png"
-  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/volna.desktop" <<DESK
+  install -dm755 "$pkgdir/usr/lib/volna"
+  cp -a "$_root/app/build/linux/x64/release/bundle/." "$pkgdir/usr/lib/volna/"
+  ln -s /usr/bin/volna "$pkgdir/usr/lib/volna/volna"
+  install -Dm644 "$_root/packaging/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/volna.png"
+  install -Dm644 "$_root/packaging/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/volna.png"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/uz.khudoberdi.volna.desktop" <<DESK
 [Desktop Entry]
 Type=Application
 Name=Volna
@@ -38,6 +41,6 @@ Comment=YouTube Music с «Моей волной»
 Exec=volna
 Icon=volna
 Categories=AudioVideo;Audio;Player;
-StartupWMClass=volna-window
+StartupWMClass=uz.khudoberdi.volna
 DESK
 }

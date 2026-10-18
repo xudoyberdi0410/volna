@@ -1,7 +1,5 @@
 /target/
 /target-win/
-node_modules/
-/ui/dist/
-/src-tauri/gen/schemas/
 *.log
-/src-tauri/binaries/
+/packaging/sidecars/
+/dist/

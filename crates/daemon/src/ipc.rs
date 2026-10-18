@@ -41,7 +41,7 @@ pub enum Msg {
     Welcome {
         stream_base: Option<String>,
     },
-    /// A Tauri command, forwarded as is (`args` with the JS camelCase keys).
+    /// A command (`crates/core/src/dispatch.rs`), `args` with camelCase keys.
     Call {
         id: u64,
         cmd: String,

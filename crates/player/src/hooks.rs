@@ -1,5 +1,5 @@
 //! What the player needs from the app (streams, wave, radio, journal).
-//! Implemented in `src-tauri/src/player/hooks.rs`; tests use a fake.
+//! Implemented in `crates/core/src/player/hooks.rs`; tests use a fake.
 
 use std::collections::HashSet;
 use std::future::Future;

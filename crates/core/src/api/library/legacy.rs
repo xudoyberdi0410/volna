@@ -1,11 +1,11 @@
 //! The webview library (Monochrome IndexedDB + localStorage) → library rows.
 //!
-//! The old UI (`ui/js/legacy-export.js`) sends
+//! The old UI (`ui/js/legacy-export.js`, shipped last in pkgrel 9) sends
 //! `{format: "volna-legacy-library", version: 1, exportedAt, stores: {<store>: …},
 //! localStorage: {<key>: <string>}}`; Monochrome's own "Backup & Restore"
 //! file (the stores at the top level) is accepted too.
 //!
-//! The stores hold TIDAL-shaped objects made by `api_emu` (`shape.rs`), whose
+//! The stores hold TIDAL-shaped objects made by the removed `api_emu` (`shape.rs`), whose
 //! ids are the YouTube Music ids themselves:
 //! - track / video `id` = `videoId`; `album.id` = `MPREb_…` (or null);
 //! - album `id` = browse id `MPREb_…`;

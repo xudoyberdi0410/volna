@@ -181,8 +181,8 @@ mod imp {
     /// The app icon as ARGB32 (network order), as SNI wants it.
     fn icons() -> Vec<Icon> {
         let pngs: [&[u8]; 2] = [
-            include_bytes!("../../../../src-tauri/icons/32x32.png"),
-            include_bytes!("../../../../src-tauri/icons/128x128.png"),
+            include_bytes!("../../../../packaging/icons/32x32.png"),
+            include_bytes!("../../../../packaging/icons/128x128.png"),
         ];
         pngs.iter().filter_map(|b| decode(b)).collect()
     }

@@ -2,7 +2,7 @@
 # Сборка: cd packaging/arch && makepkg -si
 pkgname=volna
 pkgver=0.1.0
-pkgrel=8
+pkgrel=9
 pkgdesc="Неофициальный десктоп-плеер YouTube Music с «Моей волной»"
 arch=('x86_64')
 license=('Apache-2.0')
@@ -13,6 +13,8 @@ makedepends=('cargo')  # + bun (стоит вне pacman)
 options=('!lto' '!debug')
 
 _root="$(realpath "$startdir/../..")"
+# Cargo honours CARGO_TARGET_DIR (a shared target dir); install from there too.
+_target="${CARGO_TARGET_DIR:-$_root/target}"
 
 build() {
   cd "$_root/ui"
@@ -24,8 +26,8 @@ build() {
 
 package() {
   # volna: the daemon (player, tray, MPRIS); volna-window: the UI process it starts.
-  install -Dm755 "$_root/target/release/volna" "$pkgdir/usr/bin/volna"
-  install -Dm755 "$_root/target/release/volna-window" "$pkgdir/usr/bin/volna-window"
+  install -Dm755 "$_target/release/volna" "$pkgdir/usr/bin/volna"
+  install -Dm755 "$_target/release/volna-window" "$pkgdir/usr/bin/volna-window"
   install -Dm644 "$_root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/volna.png"
   install -Dm644 "$_root/src-tauri/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/volna.png"
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/volna.desktop" <<DESK

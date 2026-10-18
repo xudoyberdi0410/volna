@@ -1,8 +1,8 @@
-//! Process memory settings shared by `volna` and `volna-window` (both
-//! binaries also use mimalloc as their global allocator).
+//! Process memory settings of the `volna` daemon (it also uses mimalloc as
+//! its global allocator).
 
-// `mi_option_set` below comes from here. Without the explicit link the
-// Windows DLL build of volna-window's lib leaves it unresolved.
+// `mi_option_set` below comes from here; linked explicitly so the symbol
+// resolves in every build of this lib.
 extern crate mimalloc as _;
 
 /// Tokio workers. The work is network-bound: a few threads are plenty, and

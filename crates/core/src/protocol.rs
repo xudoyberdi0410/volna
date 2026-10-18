@@ -1,5 +1,4 @@
-//! `volna://` requests: proxied cover images and audio bytes. The desktop
-//! daemon adds the hifi-api emulation (`volna://api/`) on top.
+//! `volna://` requests: proxied cover images and audio bytes.
 //!
 //! The same request arrives in two shapes depending on the platform:
 //! - Linux / macOS / mobile: `volna://img/?u=x` — the route is the URI host.
@@ -19,8 +18,6 @@ const WINDOWS_HOST: &str = "volna.localhost";
 /// Which service a request is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// hifi-api compatible JSON endpoints (`volna://api/...`, desktop only).
-    Api,
     /// Audio bytes with Range support (`volna://stream/<videoId>`).
     Stream,
     /// Proxied cover images (`volna://img/?u=<urlencoded>&s=<px>`).
@@ -55,7 +52,6 @@ impl Target {
         };
 
         let route = match route_name.to_ascii_lowercase().as_str() {
-            "api" => Route::Api,
             "stream" => Route::Stream,
             "img" => Route::Img,
             _ => return None,
@@ -69,34 +65,20 @@ impl Target {
     }
 }
 
-/// `OPTIONS` (CORS preflight), `stream` and `img`; `None` for `api`, which
-/// only the desktop host serves.
-pub async fn handle_core(
-    state: &AppState,
-    request: &Request<Vec<u8>>,
-) -> Option<Response<Vec<u8>>> {
-    if request.method() == http::Method::OPTIONS {
-        return Some(
-            with_cors(Response::builder().status(StatusCode::NO_CONTENT))
-                .body(Vec::new())
-                .expect("static response is valid"),
-        );
-    }
-    Some(match Target::parse(request.uri()) {
-        Some(target) if target.route == Route::Stream => {
-            media::stream(state, &target, request).await
-        }
-        Some(target) if target.route == Route::Img => media::image(state, &target).await,
-        Some(_) => return None,
-        None => json_error(StatusCode::NOT_FOUND, "unknown volna:// route"),
-    })
-}
-
-/// [`handle_core`] with `volna://api/` answered 404.
+/// Answers a `volna://` request: `OPTIONS` (CORS preflight), `stream` and
+/// `img`; anything else is a JSON 404.
 pub async fn handle(state: &AppState, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    match handle_core(state, &request).await {
-        Some(res) => res,
-        None => json_error(StatusCode::NOT_FOUND, "volna://api/ is not served here"),
+    if request.method() == http::Method::OPTIONS {
+        return with_cors(Response::builder().status(StatusCode::NO_CONTENT))
+            .body(Vec::new())
+            .expect("static response is valid");
+    }
+    match Target::parse(request.uri()) {
+        Some(target) if target.route == Route::Stream => {
+            media::stream(state, &target, &request).await
+        }
+        Some(target) => media::image(state, &target).await,
+        None => json_error(StatusCode::NOT_FOUND, "unknown volna:// route"),
     }
 }
 
@@ -140,10 +122,10 @@ pub(crate) mod tests {
 
     #[test]
     fn unix_style_uses_host_as_route() {
-        let t = parse("volna://api/search/?s=daft%20punk").unwrap();
-        assert_eq!(t.route, Route::Api);
-        assert_eq!(t.path, "/search/");
-        assert_eq!(t.query.as_deref(), Some("s=daft%20punk"));
+        let t = parse("volna://img/x?u=a%20b").unwrap();
+        assert_eq!(t.route, Route::Img);
+        assert_eq!(t.path, "/x");
+        assert_eq!(t.query.as_deref(), Some("u=a%20b"));
     }
 
     #[test]
@@ -156,8 +138,8 @@ pub(crate) mod tests {
 
     #[test]
     fn route_without_path_gets_root() {
-        assert_eq!(parse("volna://api").unwrap().path, "/");
-        assert_eq!(parse("http://volna.localhost/api").unwrap().path, "/");
+        assert_eq!(parse("volna://img").unwrap().path, "/");
+        assert_eq!(parse("http://volna.localhost/img").unwrap().path, "/");
     }
 
     #[test]
@@ -176,7 +158,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn api_route_is_not_served_by_the_core() {
+    async fn the_old_api_route_is_gone() {
         let req = Request::get("volna://api/").body(Vec::new()).unwrap();
         let res = handle(&test_state(), req).await;
         assert_eq!(res.status(), StatusCode::NOT_FOUND);

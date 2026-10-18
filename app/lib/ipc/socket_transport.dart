@@ -1,5 +1,5 @@
 /// [Transport] over the daemon socket (desktop), the Dart twin of
-/// `ipc::Client` + `src-tauri/src/shell.rs`.
+/// `ipc::Client` (`crates/daemon/src/ipc.rs`).
 library;
 
 import 'dart:async';

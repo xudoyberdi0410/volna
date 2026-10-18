@@ -1,15 +1,10 @@
-//! Volna without the webview (`docs/native-player.md` §9): the `volna`
+//! Volna without a GUI toolkit (`docs/native-player.md` §9): the `volna`
 //! daemon hosts `volna-core` (commands, network, «Моя волна», library,
 //! streams and the player logic) with the desktop parts: the IPC socket,
 //! GStreamer output, MPRIS, the tray and the `volna://` handler. The
-//! `volna-window` process (the Tauri app in `src-tauri`) shows the UI and
-//! forwards everything here over [`ipc`].
-//!
-//! `api_emu` still lives in `src-tauri/src/api_emu` and is compiled into
-//! this crate from that path.
+//! `volna-window` process (the Flutter app in `app/`) shows the UI and talks
+//! to the daemon over [`ipc`].
 
-#[path = "../../../src-tauri/src/api_emu/mod.rs"]
-pub mod api_emu;
 pub mod daemon;
 pub mod dispatch;
 pub mod ipc;
@@ -23,5 +18,5 @@ pub use volna_core::{api, commands, media, network, settings, wave};
 
 pub use state::AppState;
 
-/// Name of the custom URI scheme served to the webview.
+/// Name of the custom URI scheme served to the window.
 pub const SCHEME: &str = "volna";

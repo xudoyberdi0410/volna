@@ -1,9 +1,9 @@
-//! «Моя волна»: Tauri commands over [`volna_wave::Wave`].
+//! «Моя волна»: commands over [`volna_wave::Wave`].
 //!
-//! The database lives in `<app data dir>/wave.sqlite3`. Tracks go to the
-//! page in the same hifi-api shape as `volna://api` ([`shape::track`]), so
-//! the UI runs them through its usual `prepareTrack`. Player events come
-//! back as the UI's track objects and are mapped to [`volna_ytm::Track`].
+//! The database lives in `<app data dir>/wave.sqlite3`. Tracks go out in
+//! the hifi-api shape of [`shape::track`] (what the old UI's `volna://api`
+//! served). Player events come back as those track objects and are mapped to
+//! [`volna_ytm::Track`].
 
 use std::path::Path;
 use std::sync::Arc;

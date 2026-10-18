@@ -315,11 +315,11 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         Ok(Err(e)) => return fail(format!("{e:#}")),
         Err(_) => return fail("panic while starting the core"),
     };
-    if let Some(url) = config.dev_proxy.filter(|u| !u.is_empty()) {
-        if let Err(e) = apply_dev_proxy(&runtime, &core, url) {
-            runtime.block_on(core.shutdown());
-            return fail(format!("devProxy: {e}"));
-        }
+    if let Some(url) = config.dev_proxy.filter(|u| !u.is_empty())
+        && let Err(e) = apply_dev_proxy(&runtime, &core, url)
+    {
+        runtime.block_on(core.shutdown());
+        return fail(format!("devProxy: {e}"));
     }
     let event: Slot<EventFn> = Arc::default();
     core.set_event_sink(Some(Arc::new(FfiEvents(event.clone()))));

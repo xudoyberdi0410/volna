@@ -18,6 +18,8 @@ default = ["ytdlp", "ffi"]
 ytdlp = ["volna-streams/ytdlp"]
 # The C ABI in `ffi.rs` (`include/volna_core.h`).
 ffi = []
+# The JNI entry points of the Android app's Kotlin side (`src/ffi/jni.rs`).
+jni = ["ffi", "dep:jni"]
 # Mobile: resolve streams in-process (volna-streams InnerTube), with the
 # player's JavaScript run by the platform WebView through the FFI JS callback.
 innertube = ["volna-streams/innertube"]
@@ -49,6 +51,7 @@ volna-wave = { workspace = true }
 volna-player = { workspace = true, default-features = false }
 volna-scrobble = { workspace = true }
 volna-lyrics = { workspace = true }
+jni = { version = "0.21", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

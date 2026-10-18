@@ -58,7 +58,17 @@ struct VolnaCore *volna_core_init(const char *config_json);
 // Free with [`volna_core_free_string`].
 char *volna_core_last_error(void);
 
-// Where [`volna_core_call`] replies go (NULL `callback`: dropped).
+// The loopback audio server's base URL (`http://127.0.0.1:<port>/`), or
+// NULL without one. Free with [`volna_core_free_string`].
+//
+// # Safety
+// `handle` is NULL or a live handle.
+char *volna_core_stream_base(struct VolnaCore *handle);
+
+// Where [`volna_core_call`] replies go (NULL `callback`: dropped). When
+// this returns, the previous callback is not running and is never called
+// again, so it may be freed. Not from inside a callback (it would wait
+// for itself).
 //
 // # Safety
 // `handle` is a live handle; `callback` stays valid until replaced.

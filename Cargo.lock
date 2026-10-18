@@ -4859,6 +4859,7 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
  "image",
+ "jni",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

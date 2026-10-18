@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # volna-core for the mobile apps, cross-built on Linux (docs/mobile-build.md).
 #
-#   scripts/build-core-mobile.sh android [--release]   # libvolna_core.so: arm64-v8a, x86_64
+#   scripts/build-core-mobile.sh android [--release]   # libvolna_core.so: arm64-v8a, x86_64 (+ JNI)
 #   scripts/build-core-mobile.sh ios [--release]       # libvolna_core.a: aarch64-apple-ios
 #   scripts/build-core-mobile.sh header                # crates/core/include/volna_core.h
 #
@@ -22,9 +22,19 @@ features=(-p volna-core --no-default-features --features ffi,innertube)
 
 case "$what" in
 android)
+    # VOLNA_ANDROID_ABIS: which ABIs (default "arm64-v8a x86_64").
+    # VOLNA_JNILIBS: copy the .so files into this jniLibs directory
+    # (<dir>/<abi>/libvolna_core.so), as the Gradle build does.
     export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/25.2.9519653}"
     cd "$ROOT"
-    exec cargo ndk -t arm64-v8a -t x86_64 build "${features[@]}" "$@"
+    targets=()
+    for abi in ${VOLNA_ANDROID_ABIS:-arm64-v8a x86_64}; do
+        targets+=(-t "$abi")
+    done
+    out=()
+    [ -n "${VOLNA_JNILIBS:-}" ] && out=(-o "$VOLNA_JNILIBS")
+    # minSdk of the app; `jni` adds the entry points of the Kotlin side.
+    exec cargo ndk -P 26 "${targets[@]}" "${out[@]}" build "${features[@]}" --features jni "$@"
     ;;
 ios)
     bundle="${DARWIN_SDK_BUNDLE:-$HOME/.swiftpm/swift-sdks/darwin.artifactbundle}"

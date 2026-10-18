@@ -63,6 +63,8 @@ pub struct CoreConfig {
     pub audio_server: bool,
     /// How audio URLs are resolved; `None` disables playback.
     pub backend: Option<StreamBackend>,
+    /// Which codecs the player takes: `AacOnly` for AVPlayer (iOS).
+    pub codec: volna_streams::Codec,
 }
 
 /// The event sink the host installs (the window, the FFI callback).
@@ -114,6 +116,7 @@ impl Core {
             proxy,
             audio_server,
             backend,
+            codec,
         } = config;
         let audio_server = audio_server
             .then(|| {
@@ -124,6 +127,7 @@ impl Core {
             .flatten();
         let stream_base = audio_server.as_ref().map(LoopbackServer::stream_base);
         let mut app = AppState::with_backend(&dirs.cache, backend)?;
+        app.codec = codec;
         if let (Some(server), Some(streams)) = (audio_server, app.streams.clone()) {
             app.stream_base = stream_base;
             tokio::spawn(async move {

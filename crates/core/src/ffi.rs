@@ -202,6 +202,10 @@ struct InitConfig {
     /// loopback server without a real stream resolver. Ignored in release.
     #[serde(default)]
     dev_stream_url: Option<String>,
+    /// The codecs the platform player takes: `"aac"` (AVPlayer: m4a only)
+    /// or none (Opus preferred, AAC otherwise).
+    #[serde(default)]
+    codec: Option<String>,
     /// The signed-in YouTube session for stream resolution, as a Netscape
     /// cookies.txt (from the login WebView's cookie store). Optional: it
     /// replaces the session saved by `youtube_set_cookies`, which is
@@ -259,7 +263,8 @@ fn fail(e: impl std::fmt::Display) -> *mut VolnaCore {
 }
 
 /// Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-/// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?}`.
+/// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?,
+/// "codec": "aac"?, "devProxy": "…"?, "devStreamUrl": "…"?}` (`dev*`: debug builds only).
 /// With feature `innertube` the core resolves streams itself and runs their
 /// JavaScript through [`volna_core_set_js_callback`]. Returns NULL on failure; the
 /// reason is then in [`volna_core_last_error`] on the same thread.
@@ -300,6 +305,7 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         audio_server: config.audio_server,
         // devStreamUrl (debug builds) wins over the real resolver.
         backend: dev_backend(config.dev_stream_url.clone()).or(backend),
+        codec: volna_streams::Codec::from_param(config.codec.as_deref()),
     };
     let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         runtime.block_on(Core::start(core_config, Some(output.clone())))
@@ -310,7 +316,10 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
         Err(_) => return fail("panic while starting the core"),
     };
     if let Some(url) = config.dev_proxy.filter(|u| !u.is_empty()) {
-        apply_dev_proxy(&runtime, &core, url);
+        if let Err(e) = apply_dev_proxy(&runtime, &core, url) {
+            runtime.block_on(core.shutdown());
+            return fail(format!("devProxy: {e}"));
+        }
     }
     let event: Slot<EventFn> = Arc::default();
     core.set_event_sink(Some(Arc::new(FfiEvents(event.clone()))));
@@ -337,16 +346,21 @@ pub unsafe extern "C" fn volna_core_init(config_json: *const c_char) -> *mut Vol
 }
 
 /// `devProxy`: debug builds only, bypassing the direct-only rule.
-fn apply_dev_proxy(runtime: &tokio::runtime::Runtime, core: &Arc<Core>, url: String) {
+fn apply_dev_proxy(
+    runtime: &tokio::runtime::Runtime,
+    core: &Arc<Core>,
+    url: String,
+) -> Result<(), String> {
     if !cfg!(debug_assertions) {
         tracing::warn!("devProxy is ignored in release builds");
-        return;
+        return Ok(());
     }
     let config = volna_net::ProxyConfig::Url(url);
-    match runtime.block_on(crate::network::switch(&core.app, config)) {
-        Ok(()) => tracing::warn!(proxy = ?core.app.net.status().proxy, "devProxy on"),
-        Err(e) => tracing::error!("devProxy: {e}"),
-    }
+    runtime
+        .block_on(crate::network::switch(&core.app, config))
+        .map_err(|e| e.to_string())?;
+    tracing::warn!(proxy = ?core.app.net.status().proxy, "devProxy on");
+    Ok(())
 }
 
 /// Why the last [`volna_core_init`] on this thread failed, or NULL.
@@ -765,6 +779,29 @@ mod tests {
                 return got;
             }
         }
+    }
+
+    #[test]
+    fn dev_proxy_and_codec_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let init = |extra: Value| {
+            let mut c = serde_json::json!({ "dataDir": dir.path(), "audioServer": false });
+            c.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let c = cstr(&c.to_string());
+            // SAFETY: a valid string.
+            unsafe { volna_core_init(c.as_ptr()) }
+        };
+        // Tests are debug builds: a bad proxy URL is refused at init.
+        let h = init(serde_json::json!({ "devProxy": "ftp://nope" }));
+        assert!(h.is_null());
+        // SAFETY: the error string is ours to free.
+        assert!(take(volna_core_last_error()).contains("devProxy"));
+        let h = init(serde_json::json!({ "devProxy": "socks5h://127.0.0.1:9", "codec": "aac" }));
+        assert!(!h.is_null());
+        // SAFETY: a live handle, shut down once.
+        unsafe { volna_core_shutdown(h) };
     }
 
     #[test]

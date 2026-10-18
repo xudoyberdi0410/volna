@@ -45,7 +45,8 @@ extern "C" {
 #endif // __cplusplus
 
 // Starts the core. `config_json`: `{"dataDir": "…", "cacheDir": "…"?,
-// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?}`.
+// "audioServer": true?, "log": "info"?, "youtubeCookies": "<cookies.txt>"?,
+// "codec": "aac"?, "devProxy": "…"?, "devStreamUrl": "…"?}` (`dev*`: debug builds only).
 // With feature `innertube` the core resolves streams itself and runs their
 // JavaScript through [`volna_core_set_js_callback`]. Returns NULL on failure; the
 // reason is then in [`volna_core_last_error`] on the same thread.

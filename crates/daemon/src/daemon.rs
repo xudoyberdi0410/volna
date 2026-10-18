@@ -256,6 +256,7 @@ pub async fn run(launch: Launch) -> anyhow::Result<()> {
         proxy: true,
         audio_server: true,
         backend: StreamBackend::locate_ytdlp(),
+        codec: volna_streams::Codec::PreferOpus,
     };
     let core = Core::start(config, player::gstreamer_output()).await?;
     let api = crate::state::AppState::from_core(core.app.clone()).api;

@@ -153,6 +153,7 @@ mod tests {
             proxy: false,
             audio_server: false,
             backend: Some(crate::StreamBackend::InnerTube(innertube.clone())),
+            codec: volna_streams::Codec::default(),
         };
         let output = crate::player::platform::PlatformOutput::new();
         let core = Core::start(config, Some(output)).await.unwrap();

@@ -10,7 +10,7 @@ use super::json::{
 };
 use super::runs::{Label, leading_count, parse_runs};
 use crate::models::{
-    Album, AlbumKind, AlbumRef, Artist, ArtistRef, Item, Playlist, Track, TrackPage,
+    Album, AlbumKind, AlbumRef, Artist, ArtistRef, Item, Playlist, Track, TrackKind, TrackPage,
 };
 
 const TWO_COL: &str = "/contents/twoColumnBrowseResultsRenderer";
@@ -95,6 +95,12 @@ pub fn parse_album(resp: &Value, browse_id: &str) -> Option<Album> {
         name: title.clone(),
     };
     for t in &mut tracks {
+        // Some albums (Daft Punk's "Random Access Memories") link every row
+        // to the official video instead of the Art Track. The row is still
+        // a song of the album; only user uploads stay videos.
+        if t.kind == TrackKind::OfficialVideo {
+            t.kind = TrackKind::Song;
+        }
         t.album.get_or_insert_with(|| album_ref.clone());
         if t.thumbnails.is_empty() {
             t.thumbnails = thumbs.clone();

@@ -228,6 +228,16 @@ fn album_page() {
 }
 
 #[test]
+fn album_rows_linked_to_official_videos_are_songs() {
+    // Captured 2026-10-17: every row of this album links an OMV video id.
+    let a = parsers::parse_album(&fixture("album_omv"), "MPREb_K8qWMWVqXGi").unwrap();
+    assert_eq!(a.title, "Random Access Memories");
+    assert_eq!(a.tracks.len(), 13);
+    assert_eq!(a.tracks[0].video_id, "IluRBvnYMoY");
+    assert!(a.tracks.iter().all(|t| t.kind == TrackKind::Song));
+}
+
+#[test]
 fn album_id_behind_olak_playlist() {
     let id = parsers::album_id_from_playlist_page(&fixture("album_olak_playlist"));
     assert_eq!(id.as_deref(), Some("MPREb_9CC1cAMRQuj"));
